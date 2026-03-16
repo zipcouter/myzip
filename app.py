@@ -283,11 +283,13 @@ def fetch_building_ledger(sigungu_cd, dong_name, jibun):
     bun = parts[0].strip().zfill(4) if parts else "0000"
     ji = parts[1].strip().zfill(4) if len(parts) > 1 else "0000"
 
+    # 총괄표제부(getBrRecapTitleInfo): 세대수·주차·용적률·건폐율 포함
+    # 표제부(getBrTitleInfo): 건물명 등 기본정보만 포함 → 사용 안 함
     urls_to_try = [
-        f"https://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo"
+        f"https://apis.data.go.kr/1613000/BldRgstHubService/getBrRecapTitleInfo"
         f"?serviceKey={MOLIT_API_KEY}&sigunguCd={sigungu_cd}&bjdongCd={bjdong_cd}"
         f"&platGbCd={plat_gb_cd}&bun={bun}&ji={ji}&numOfRows=10",
-        f"http://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo"
+        f"http://apis.data.go.kr/1613000/BldRgstHubService/getBrRecapTitleInfo"
         f"?serviceKey={MOLIT_API_KEY}&sigunguCd={sigungu_cd}&bjdongCd={bjdong_cd}"
         f"&platGbCd={plat_gb_cd}&bun={bun}&ji={ji}&numOfRows=10",
     ]
