@@ -27,7 +27,7 @@ with st.sidebar:
     st.write("원하시는 시장을 선택하세요.")
     page = st.radio("조회 메뉴", ["🏢 아파트 실거래가", "🏘️ 비아파트 (오피스텔/빌라 등)"])
     st.write("---")
-    st.caption("v2.9 - Building Ledger Dual-Engine & HTTP Status Tracer")
+    st.caption("v3.0 - Detail UI Upgraded (Households & Parking Ratio)")
     
     if st.button("🔄 앱 캐시 강제 초기화"):
         st.cache_data.clear()
@@ -137,11 +137,11 @@ def get_months_from_dates(start_d, end_d):
     return months
 
 # =====================================================================
-# 🚨 [수술 적용] 건축물대장 표제부 듀얼-엔진 및 HTTP 에러 추적
+# 🚨 건축물대장 듀얼-엔진 (세대수 추가 및 포맷 수정)
 # =====================================================================
 @st.cache_data(show_spinner=False)
 def fetch_building_ledger(sigungu_cd, dong_name, jibun):
-    if not jibun: return None, None, None, "실거래가 데이터에 지번 정보가 누락됨"
+    if not jibun: return None, None, None, None, "실거래가 데이터에 지번 정보가 누락됨"
     
     bjdong_cd = ""
     try:
@@ -150,9 +150,9 @@ def fetch_building_ledger(sigungu_cd, dong_name, jibun):
             if dong_name in item['name']:
                 bjdong_cd = item['code'][5:10]
                 break
-    except: return None, None, None, "법정동코드 변환 서버 통신 오류"
+    except: return None, None, None, None, "법정동코드 변환 서버 통신 오류"
     
-    if not bjdong_cd: return None, None, None, f"'{dong_name}'의 5자리 법정동코드 변환 실패"
+    if not bjdong_cd: return None, None, None, None, f"'{dong_name}'의 5자리 법정동코드 변환 실패"
     
     plat_gb_cd = "0" 
     clean_jibun = str(jibun).replace('산', '').strip()
@@ -162,7 +162,6 @@ def fetch_building_ledger(sigungu_cd, dong_name, jibun):
     bun = parts[0].zfill(4) if len(parts) > 0 else "0000"
     ji = parts[1].zfill(4) if len(parts) > 1 else "0000"
     
-    # 🚨 듀얼 통신망 (HTTPS 실패 시 HTTP 우회)
     urls_to_try = [
         f"https://apis.data.go.kr/1613000/BldRgstService_v2/getBrTitleInfo?serviceKey={MOLIT_API_KEY}&sigunguCd={sigungu_cd}&bjdongCd={bjdong_cd}&platGbCd={plat_gb_cd}&bun={bun}&ji={ji}&numOfRows=10",
         f"http://apis.data.go.kr/1613000/BldRgstService_v2/getBrTitleInfo?serviceKey={MOLIT_API_KEY}&sigunguCd={sigungu_cd}&bjdongCd={bjdong_cd}&platGbCd={plat_gb_cd}&bun={bun}&ji={ji}&numOfRows=10"
@@ -193,6 +192,7 @@ def fetch_building_ledger(sigungu_cd, dong_name, jibun):
                 items = root.findall('.//item')
                 if items:
                     tot_pkng = 0
+                    tot_hh = 0  # 🚨 세대수 변수 추가
                     vl_rat = 0.0
                     bc_rat = 0.0
                     for item in items:
@@ -200,31 +200,36 @@ def fetch_building_ledger(sigungu_cd, dong_name, jibun):
                         if main_atch_gb_cd in ["0", "1", ""]: 
                             try: tot_pkng += int(get_xml_text(item, ['totPkngCnt'], "0"))
                             except: pass
+                            try: tot_hh += int(get_xml_text(item, ['hhCnt'], "0"))  # 세대수 추출
+                            except: pass
                             try: 
                                 vl_rat = max(vl_rat, float(get_xml_text(item, ['vlRat'], "0")))
                                 bc_rat = max(bc_rat, float(get_xml_text(item, ['bcRat'], "0")))
                             except: pass
                     
-                    if tot_pkng == 0 and vl_rat == 0.0:
-                        tot_pkng = get_xml_text(items[0], ['totPkngCnt'], "0")
-                        vl_rat = get_xml_text(items[0], ['vlRat'], "0")
-                        bc_rat = get_xml_text(items[0], ['bcRat'], "0")
+                    if tot_pkng == 0 and vl_rat == 0.0 and tot_hh == 0:
+                        try: tot_pkng = int(get_xml_text(items[0], ['totPkngCnt'], "0"))
+                        except: pass
+                        try: tot_hh = int(get_xml_text(items[0], ['hhCnt'], "0"))
+                        except: pass
+                        try: vl_rat = float(get_xml_text(items[0], ['vlRat'], "0"))
+                        except: pass
+                        try: bc_rat = float(get_xml_text(items[0], ['bcRat'], "0"))
+                        except: pass
                         
-                    return tot_pkng, f"{float(vl_rat)}%", f"{float(bc_rat)}%", "SUCCESS"
+                    return tot_pkng, tot_hh, f"{vl_rat}%", f"{bc_rat}%", "SUCCESS"
                 else:
                     last_err = f"대장 데이터 없음 (지번: {bjdong_cd}-{plat_gb_cd}-{bun}-{ji})"
-                    # 데이터가 진짜 없는 경우는 루프 종료
-                    return None, None, None, last_err
+                    return None, None, None, None, last_err
             else:
-                # 🚨 HTTP 상태 코드 강제 적발
                 last_err = f"서버 거절 (HTTP {res.status_code})"
         except Exception as e: 
             last_err = f"통신 에러: {str(e)[:50]}"
     
-    return None, None, None, last_err
+    return None, None, None, None, last_err
 
 # =====================================================================
-# 🚨 클라우드 전용 최신 API (실거래가 - 기존 코드 100% 보존)
+# 🚨 클라우드 전용 최신 API (실거래가 - 기존 100% 보존)
 # =====================================================================
 def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_type):
     if not lawd_cd: return None, "지역 코드를 찾을 수 없습니다."
@@ -369,7 +374,7 @@ def render_clickable_list(df, is_apt=True):
         st.markdown("<hr style='margin: 0px; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
 
 # =====================================================================
-# 🚨 상세페이지 (건축물대장 통신 및 차트 억 단위/한글화 완벽 적용)
+# 🚨 상세페이지 (세대수 및 세대당 주차대수 계산 등 UI 업데이트 적용)
 # =====================================================================
 def show_detail_page():
     apt_name = st.session_state.get("detail_apt_name", "이름없음")
@@ -398,17 +403,25 @@ def show_detail_page():
         st.write(f"**📍 법정동 주소:** {sido} {sigungu} {dong_name} {jibun}")
         st.write(f"**📅 준공일:** {build_str}")
         
-        # 🚨 건축물대장 실시간 호출
         with st.spinner("📡 건축물대장 스펙 조회 중..."):
-            pkng, vl, bc, debug_msg = fetch_building_ledger(lawd_cd, dong_name, jibun)
+            pkng, hh_cnt, vl, bc, debug_msg = fetch_building_ledger(lawd_cd, dong_name, jibun)
         
+        # 🚨 [수술 적용] 세대수, 세대당 주차대수 계산 및 용적률/건폐율 양식 변경
         if pkng is not None:
-            st.write(f"**🚗 총 주차대수:** {pkng}대")
-            st.write(f"**🏢 용적률 / 🏗️ 건폐율:** {vl} / {bc}")
+            st.write(f"**🏘️ 세대수:** {hh_cnt}세대")
+            
+            # 주차대수 계산 (세대수가 0이 아닐 때만)
+            if hh_cnt and hh_cnt > 0:
+                pkng_per_hh = round(pkng / hh_cnt, 2)
+                st.write(f"**🚗 세대당 주차대수:** {pkng_per_hh}대 (총 {pkng}대)")
+            else:
+                st.write(f"**🚗 세대당 주차대수:** 계산 불가 (총 {pkng}대)")
+                
+            st.write(f"**🏢 용적률 :** {vl} / **🏗️ 건폐율 :** {bc}")
         else:
-            # 🚨 원인을 뭉뚱그리지 않고 있는 그대로 화면에 적나라하게 띄움
-            st.write(f"**🚗 주차대수:** 조회 불가 🚨({debug_msg})")
-            st.write(f"**🏢 용적률 / 🏗️ 건폐율:** 조회 불가")
+            st.write(f"**🏘️ 세대수:** 조회 불가")
+            st.write(f"**🚗 세대당 주차대수:** 조회 불가 🚨({debug_msg})")
+            st.write(f"**🏢 용적률 :** 조회 불가 / **🏗️ 건폐율 :** 조회 불가")
         
     with col_map:
         lat, lng = get_lat_lng_free(sido, sigungu, dong_name, apt_name)
@@ -491,14 +504,12 @@ def show_detail_page():
             fig = go.Figure()
             df_for_chart = detail_full_df.copy()
             
-            # 🚨 한글 날짜 형식 변환
             df_for_chart['계약월_한글'] = df_for_chart['계약일'].str[:4] + "년 " + df_for_chart['계약일'].str[5:7] + "월"
             df_for_chart['계약월'] = df_for_chart['계약일'].str[:7]
 
             sale_agg = pd.DataFrame()
             rent_agg = pd.DataFrame()
 
-            # 🚨 만원을 '억 원' 단위로 변환
             if current_view_type in ["매매", "매매+전세 통합"]:
                 df_sale_c = df_for_chart[df_for_chart['거래유형'] == '매매']
                 if not df_sale_c.empty: 
