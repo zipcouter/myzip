@@ -348,40 +348,83 @@ def fetch_building_ledger(sigungu_cd, dong_name, jibun):
             vl_rat   = 0.0
             bc_rat   = 0.0
 
-            for item in items:
-                # 세대수
-                val = get_xml_text(item, ["hhCnt"], "")
-                if val:
-                    try: tot_hh += int(float(val))
+            # ── 모든 태그를 소문자 dict로 수집 ─────────────────────────
+            all_tags = {}
+            for it in items:
+                for child in it.iter():
+                    tag_l = child.tag.split("}")[-1].strip().lower()
+                    val   = (child.text or "").strip()
+                    if val and tag_l not in all_tags:   # 첫 번째 item 우선
+                        all_tags[tag_l] = val
+
+            def tv(key, default="0"):
+                return all_tags.get(key.lower(), default)
+
+            # ── 세대수: hhldCnt(집합) > hoCnt(일반) > hhCnt ─────────────
+            tot_hh = 0
+            for k in ["hhldcnt", "hocnt", "hhcnt"]:
+                v = all_tags.get(k, "")
+                if v:
+                    try:
+                        n = int(float(v))
+                        if n > 0:
+                            tot_hh = n
+                            break
+                    except:
+                        pass
+
+            # ── 주차: totPkngCnt 우선, 없으면 세부 합산 ─────────────────
+            tot_pkng = 0
+            v = all_tags.get("totpkngcnt", "")
+            if v:
+                try: tot_pkng = int(float(v))
+                except: pass
+            if tot_pkng == 0:
+                for pk in ["oudrmechutcnt", "indrmechutcnt", "oudrautoutcnt", "indrautoutcnt"]:
+                    try: tot_pkng += int(float(all_tags.get(pk, "0")))
                     except: pass
 
-                # 주차대수 — 세 필드 합산
-                for pkng_tag in ["totPkngCnt", "oudrMechUtcnt", "indrMechUtcnt", "oudrAutoUtcnt", "indrAutoUtcnt"]:
-                    val = get_xml_text(item, [pkng_tag], "")
-                    if val:
-                        try: tot_pkng += int(float(val))
-                        except: pass
+            # ── 용적률 / 건폐율 ──────────────────────────────────────────
+            vl_rat = 0.0
+            bc_rat = 0.0
 
-                # 용적률 / 건폐율 — 최댓값
-                val = get_xml_text(item, ["vlRat"], "")
-                if val:
-                    try: vl_rat = max(vl_rat, float(val))
-                    except: pass
+            try: vl_rat = float(tv("vlrat")); vl_rat = vl_rat if vl_rat > 0 else 0.0
+            except: pass
+            try: bc_rat = float(tv("bcrat")); bc_rat = bc_rat if bc_rat > 0 else 0.0
+            except: pass
 
-                val = get_xml_text(item, ["bcRat"], "")
-                if val:
-                    try: bc_rat = max(bc_rat, float(val))
-                    except: pass
+            # vlRat=0이면 vlRatEstmTotArea / platArea 로 계산
+            if vl_rat == 0.0:
+                try:
+                    plat = float(tv("platarea"))
+                    estm = float(tv("vlratestmtotarea"))
+                    if plat > 0 and estm > 0:
+                        vl_rat = round(estm / plat * 100, 2)
+                except: pass
 
-            # ── 디버그: 전체 태그 목록 출력 (줄바꿈으로 가독성↑) ──────
-            tag_lines = "\n".join([f"  {k} = {v}" for k, v in found_tags.items()])
+            # bcRat=0이면 archArea / platArea 로 계산
+            if bc_rat == 0.0:
+                try:
+                    plat = float(tv("platarea"))
+                    arch = float(tv("archarea"))
+                    if plat > 0 and arch > 0:
+                        bc_rat = round(arch / plat * 100, 2)
+                except: pass
+
+            vl_str = f"{vl_rat}%" if vl_rat > 0 else "정보없음"
+            bc_str = f"{bc_rat}%" if bc_rat > 0 else "정보없음"
+
+            # ── 디버그 ───────────────────────────────────────────────────
+            tag_lines = "\n".join([f"  {k} = {v}" for k, v in sorted(all_tags.items())])
             debug_msg = (
-                f"[파싱 결과] hhCnt={tot_hh}, totPkngCnt={tot_pkng}, "
-                f"vlRat={vl_rat}, bcRat={bc_rat}\n\n"
-                f"[item[0] 전체 태그]\n{tag_lines}"
+                f"[파싱 결과] 세대수={tot_hh}, 주차={tot_pkng}, "
+                f"용적률={vl_str}, 건폐율={bc_str}\n"
+                f"platArea={tv('platarea')}, archArea={tv('archarea')}, "
+                f"vlRatEstmTotArea={tv('vlratestmtotarea')}\n\n"
+                f"[전체 태그]\n{tag_lines}"
             )
 
-            return tot_pkng, tot_hh, f"{vl_rat}%", f"{bc_rat}%", debug_msg
+            return tot_pkng, tot_hh, vl_str, bc_str, debug_msg
 
         except Exception as e:
             last_err = f"통신 에러: {str(e)[:80]}\n\n{raw_xml_debug}"
