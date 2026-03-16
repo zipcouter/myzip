@@ -329,7 +329,7 @@ def fetch_building_ledger(sigungu_cd, dong_name, jibun):
                 last_err = f"대장 데이터 없음 (bjdong:{bjdong_cd} bun:{bun} ji:{ji})\n\n{raw_xml_debug}"
                 return None, None, None, None, last_err
 
-            # ── 실제 태그명 수집 (디버그용) ──────────────────────────
+            # ── 전체 태그 수집 (디버그용 — 잘리지 않게 전부 저장) ───────
             found_tags = {}
             for child in items[0].iter():
                 tag = child.tag.split("}")[-1].strip()
@@ -337,70 +337,49 @@ def fetch_building_ledger(sigungu_cd, dong_name, jibun):
                 if val:
                     found_tags[tag] = val
 
-            # ── ① mainAtchGbCd 필터 없이 모든 item 집계 ─────────────
-            #    주동(0) + 부속동(1) 구분 없이 합산 후 최대값 사용
+            # ── 국토부 BrRecapTitleInfo 공식 태그명만 사용 ──────────────
+            # 참고: https://www.data.go.kr 건축물대장 총괄표제부 정의서
+            #   hhCnt      : 세대수
+            #   totPkngCnt : 옥외+옥내+기계식 합산 주차수
+            #   vlRat      : 용적률
+            #   bcRat      : 건폐율
             tot_pkng = 0
             tot_hh   = 0
             vl_rat   = 0.0
             bc_rat   = 0.0
 
             for item in items:
-                # 주차대수 — totPkngCnt
-                for tag in ["totPkngCnt", "totpkngcnt", "parkingCnt"]:
-                    val = get_xml_text(item, [tag], "")
+                # 세대수
+                val = get_xml_text(item, ["hhCnt"], "")
+                if val:
+                    try: tot_hh += int(float(val))
+                    except: pass
+
+                # 주차대수 — 세 필드 합산
+                for pkng_tag in ["totPkngCnt", "oudrMechUtcnt", "indrMechUtcnt", "oudrAutoUtcnt", "indrAutoUtcnt"]:
+                    val = get_xml_text(item, [pkng_tag], "")
                     if val:
-                        try: tot_pkng += int(float(val)); break
+                        try: tot_pkng += int(float(val))
                         except: pass
 
-                # 세대수 — hhCnt (호수)
-                for tag in ["hhCnt", "hhcnt", "hoCnt", "hocnt", "householdCnt"]:
-                    val = get_xml_text(item, [tag], "")
-                    if val:
-                        try: tot_hh += int(float(val)); break
-                        except: pass
+                # 용적률 / 건폐율 — 최댓값
+                val = get_xml_text(item, ["vlRat"], "")
+                if val:
+                    try: vl_rat = max(vl_rat, float(val))
+                    except: pass
 
-                # 용적률 — vlRat
-                for tag in ["vlRat", "vlrat", "floorAreaRatio"]:
-                    val = get_xml_text(item, [tag], "")
-                    if val:
-                        try: vl_rat = max(vl_rat, float(val)); break
-                        except: pass
+                val = get_xml_text(item, ["bcRat"], "")
+                if val:
+                    try: bc_rat = max(bc_rat, float(val))
+                    except: pass
 
-                # 건폐율 — bcRat
-                for tag in ["bcRat", "bcrat", "buildingCoverageRatio"]:
-                    val = get_xml_text(item, [tag], "")
-                    if val:
-                        try: bc_rat = max(bc_rat, float(val)); break
-                        except: pass
-
-            # ── ② 여전히 0이면 found_tags 에서 유사 키 재탐색 ────────
-            if tot_hh == 0:
-                for k, v in found_tags.items():
-                    if "hh" in k.lower() or "ho" in k.lower() or "세대" in k or "household" in k.lower():
-                        try: tot_hh = int(float(v)); break
-                        except: pass
-
-            if tot_pkng == 0:
-                for k, v in found_tags.items():
-                    if "pkng" in k.lower() or "park" in k.lower() or "주차" in k:
-                        try: tot_pkng = int(float(v)); break
-                        except: pass
-
-            if vl_rat == 0.0:
-                for k, v in found_tags.items():
-                    if "vl" in k.lower() or "용적" in k:
-                        try: vl_rat = float(v); break
-                        except: pass
-
-            if bc_rat == 0.0:
-                for k, v in found_tags.items():
-                    if "bc" in k.lower() or "건폐" in k:
-                        try: bc_rat = float(v); break
-                        except: pass
-
-            # 디버그: 실제 발견된 태그 정보를 메시지에 포함
-            tag_summary = " | ".join([f"{k}={v}" for k, v in list(found_tags.items())[:20]])
-            debug_msg = f"SUCCESS | 태그: {tag_summary}"
+            # ── 디버그: 전체 태그 목록 출력 (줄바꿈으로 가독성↑) ──────
+            tag_lines = "\n".join([f"  {k} = {v}" for k, v in found_tags.items()])
+            debug_msg = (
+                f"[파싱 결과] hhCnt={tot_hh}, totPkngCnt={tot_pkng}, "
+                f"vlRat={vl_rat}, bcRat={bc_rat}\n\n"
+                f"[item[0] 전체 태그]\n{tag_lines}"
+            )
 
             return tot_pkng, tot_hh, f"{vl_rat}%", f"{bc_rat}%", debug_msg
 
