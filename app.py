@@ -248,9 +248,15 @@ def apply_area_filter(df, pyeong_type, is_apt=True):
 # ✅ FIX 4: ttl 추가로 캐시 충돌 방지
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_building_ledger(sigungu_cd, dong_name, jibun):
+    """
+    건축물대장 조회.
+    반환: (tot_pkng, tot_hh, vl_rat_str, bc_rat_str, debug_msg)
+    debug_msg: "SUCCESS" 또는 에러/디버그 문자열 (raw XML 포함)
+    """
     if not jibun:
         return None, None, None, None, "실거래가 데이터에 지번 정보가 누락됨"
 
+    # ── 법정동 코드 조회 ──────────────────────────────────────────
     bjdong_cd = ""
     try:
         res = requests.get(
@@ -274,8 +280,8 @@ def fetch_building_ledger(sigungu_cd, dong_name, jibun):
         plat_gb_cd = "1"
 
     parts = clean_jibun.split("-")
-    bun = parts[0].zfill(4) if parts else "0000"
-    ji = parts[1].zfill(4) if len(parts) > 1 else "0000"
+    bun = parts[0].strip().zfill(4) if parts else "0000"
+    ji = parts[1].strip().zfill(4) if len(parts) > 1 else "0000"
 
     urls_to_try = [
         f"https://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo"
@@ -287,9 +293,13 @@ def fetch_building_ledger(sigungu_cd, dong_name, jibun):
     ]
 
     last_err = "알 수 없는 에러"
+    raw_xml_debug = ""
+
     for url in urls_to_try:
         try:
             res = requests.get(url, timeout=10, verify=False)
+            raw_xml_debug = res.text[:3000]  # 디버그용 앞 3000자 보관
+
             if res.status_code != 200:
                 last_err = f"서버 거절 (HTTP {res.status_code})"
                 continue
@@ -297,71 +307,103 @@ def fetch_building_ledger(sigungu_cd, dong_name, jibun):
             root = ET.fromstring(res.text)
 
             err_reason = root.find(".//returnReasonCode")
-            if err_reason is not None and err_reason.text.strip() != "00":
-                last_err = "API 키 미승인 (동기화 지연 또는 키 오류)"
+            if err_reason is not None and err_reason.text and err_reason.text.strip() != "00":
+                last_err = f"API 키 미승인 ({err_reason.text.strip()})\n\n{raw_xml_debug}"
                 continue
 
-            err_msg = root.find(".//errMsg")
-            if err_msg is not None and "SERVICE ERROR" in err_msg.text.upper():
-                last_err = "API 키 미승인 (동기화 지연 또는 키 오류)"
+            err_msg_el = root.find(".//errMsg")
+            if err_msg_el is not None and err_msg_el.text and "SERVICE ERROR" in err_msg_el.text.upper():
+                last_err = f"API 키 미승인 (SERVICE ERROR)\n\n{raw_xml_debug}"
                 continue
 
             result_code = root.find(".//resultCode")
-            if result_code is not None and result_code.text.strip() not in ["00", "0"]:
-                result_msg = root.find(".//resultMsg")
-                last_err = f"국토부 응답 에러: {result_msg.text if result_msg is not None else '알 수 없음'}"
+            if result_code is not None and result_code.text and result_code.text.strip() not in ["00", "0"]:
+                result_msg_el = root.find(".//resultMsg")
+                last_err = f"국토부 응답 에러: {result_msg_el.text if result_msg_el is not None else '알 수 없음'}\n\n{raw_xml_debug}"
                 continue
 
             items = root.findall(".//item")
             if not items:
-                last_err = f"대장 데이터 없음 (지번: {bjdong_cd}-{plat_gb_cd}-{bun}-{ji})"
+                last_err = f"대장 데이터 없음 (bjdong:{bjdong_cd} bun:{bun} ji:{ji})\n\n{raw_xml_debug}"
                 return None, None, None, None, last_err
 
+            # ── 실제 태그명 수집 (디버그용) ──────────────────────────
+            found_tags = {}
+            for child in items[0].iter():
+                tag = child.tag.split("}")[-1].strip()
+                val = (child.text or "").strip()
+                if val:
+                    found_tags[tag] = val
+
+            # ── ① mainAtchGbCd 필터 없이 모든 item 집계 ─────────────
+            #    주동(0) + 부속동(1) 구분 없이 합산 후 최대값 사용
             tot_pkng = 0
-            tot_hh = 0
-            vl_rat = 0.0
-            bc_rat = 0.0
+            tot_hh   = 0
+            vl_rat   = 0.0
+            bc_rat   = 0.0
 
             for item in items:
-                main_atch_gb_cd = get_xml_text(item, ["mainAtchGbCd"], "")
-                if main_atch_gb_cd in ["0", "1", ""]:
-                    try:
-                        tot_pkng += int(get_xml_text(item, ["totPkngCnt"], "0"))
-                    except Exception:
-                        pass
-                    try:
-                        tot_hh += int(get_xml_text(item, ["hhCnt"], "0"))
-                    except Exception:
-                        pass
-                    try:
-                        vl_rat = max(vl_rat, float(get_xml_text(item, ["vlRat"], "0")))
-                        bc_rat = max(bc_rat, float(get_xml_text(item, ["bcRat"], "0")))
-                    except Exception:
-                        pass
+                # 주차대수 — totPkngCnt
+                for tag in ["totPkngCnt", "totpkngcnt", "parkingCnt"]:
+                    val = get_xml_text(item, [tag], "")
+                    if val:
+                        try: tot_pkng += int(float(val)); break
+                        except: pass
 
-            # 모든 값이 0이면 첫 번째 아이템에서 직접 추출
-            if tot_pkng == 0 and vl_rat == 0.0 and tot_hh == 0:
-                try:
-                    tot_pkng = int(get_xml_text(items[0], ["totPkngCnt"], "0"))
-                except Exception:
-                    pass
-                try:
-                    tot_hh = int(get_xml_text(items[0], ["hhCnt"], "0"))
-                except Exception:
-                    pass
-                try:
-                    vl_rat = float(get_xml_text(items[0], ["vlRat"], "0"))
-                except Exception:
-                    pass
-                try:
-                    bc_rat = float(get_xml_text(items[0], ["bcRat"], "0"))
-                except Exception:
-                    pass
+                # 세대수 — hhCnt (호수)
+                for tag in ["hhCnt", "hhcnt", "hoCnt", "hocnt", "householdCnt"]:
+                    val = get_xml_text(item, [tag], "")
+                    if val:
+                        try: tot_hh += int(float(val)); break
+                        except: pass
 
-            return tot_pkng, tot_hh, f"{vl_rat}%", f"{bc_rat}%", "SUCCESS"
+                # 용적률 — vlRat
+                for tag in ["vlRat", "vlrat", "floorAreaRatio"]:
+                    val = get_xml_text(item, [tag], "")
+                    if val:
+                        try: vl_rat = max(vl_rat, float(val)); break
+                        except: pass
+
+                # 건폐율 — bcRat
+                for tag in ["bcRat", "bcrat", "buildingCoverageRatio"]:
+                    val = get_xml_text(item, [tag], "")
+                    if val:
+                        try: bc_rat = max(bc_rat, float(val)); break
+                        except: pass
+
+            # ── ② 여전히 0이면 found_tags 에서 유사 키 재탐색 ────────
+            if tot_hh == 0:
+                for k, v in found_tags.items():
+                    if "hh" in k.lower() or "ho" in k.lower() or "세대" in k or "household" in k.lower():
+                        try: tot_hh = int(float(v)); break
+                        except: pass
+
+            if tot_pkng == 0:
+                for k, v in found_tags.items():
+                    if "pkng" in k.lower() or "park" in k.lower() or "주차" in k:
+                        try: tot_pkng = int(float(v)); break
+                        except: pass
+
+            if vl_rat == 0.0:
+                for k, v in found_tags.items():
+                    if "vl" in k.lower() or "용적" in k:
+                        try: vl_rat = float(v); break
+                        except: pass
+
+            if bc_rat == 0.0:
+                for k, v in found_tags.items():
+                    if "bc" in k.lower() or "건폐" in k:
+                        try: bc_rat = float(v); break
+                        except: pass
+
+            # 디버그: 실제 발견된 태그 정보를 메시지에 포함
+            tag_summary = " | ".join([f"{k}={v}" for k, v in list(found_tags.items())[:20]])
+            debug_msg = f"SUCCESS | 태그: {tag_summary}"
+
+            return tot_pkng, tot_hh, f"{vl_rat}%", f"{bc_rat}%", debug_msg
 
         except Exception as e:
-            last_err = f"통신 에러: {str(e)[:50]}"
+            last_err = f"통신 에러: {str(e)[:80]}\n\n{raw_xml_debug}"
 
     return None, None, None, None, last_err
 
@@ -683,10 +725,15 @@ def show_detail_page():
             else:
                 st.write(f"**🚗 세대당 주차대수:** 계산 불가 (총 {pkng}대)")
             st.write(f"**🏢 용적률:** {vl} / **🏗️ 건폐율:** {bc}")
+            # 디버그: SUCCESS여도 실제 태그 확인 가능
+            with st.expander("🔧 건축물대장 API 디버그 (개발자용)", expanded=False):
+                st.code(debug_msg, language="text")
         else:
             st.write("**🏘️ 세대수:** 조회 불가")
-            st.write(f"**🚗 세대당 주차대수:** 조회 불가 🚨({debug_msg})")
+            st.write("**🚗 세대당 주차대수:** 조회 불가")
             st.write("**🏢 용적률:** 조회 불가 / **🏗️ 건폐율:** 조회 불가")
+            with st.expander("🚨 건축물대장 오류 상세 (클릭하여 확인)", expanded=True):
+                st.code(debug_msg, language="text")
 
     with col_map:
         lat, lng = get_lat_lng_free(sido, sigungu, dong_name, apt_name)
