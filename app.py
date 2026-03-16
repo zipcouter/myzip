@@ -15,10 +15,8 @@ from geopy.geocoders import Nominatim
 # ---------------------------------------------------------
 st.set_page_config(page_title="집카우터 | 실거래가 실시간 조회", layout="wide")
 
-# 대표님의 실제 국토부 API 키
 MOLIT_API_KEY = "bba046226cfdba339da5237b76bfaff8d43c90ab08d4efda3a30f6bb87ab2486"
 
-# 🚨 행 클릭 이벤트를 위한 테이블 고유 키 생성
 if "table_key" not in st.session_state:
     st.session_state.table_key = str(uuid.uuid4())
 
@@ -27,7 +25,7 @@ with st.sidebar:
     st.write("원하시는 시장을 선택하세요.")
     page = st.radio("조회 메뉴", ["🏢 아파트 실거래가", "🏘️ 비아파트 (오피스텔/빌라 등)"])
     st.write("---")
-    st.caption("v1.4 - Mobile Responsive Data Table")
+    st.caption("v1.4 - Table Typo Fixed")
     
     if st.button("🔄 앱 캐시 강제 초기화"):
         st.cache_data.clear()
@@ -200,30 +198,27 @@ def render_clickable_list(df, is_apt=True):
     
     display_df = df.copy()
     
-    # 1. 가격 표기 포맷팅
     def make_price_str(row):
         p = format_to_korean_currency(row['거래금액(만 원)'])
         if row.get('월세(만 원)', 0) > 0: return f"{p} / {row['월세(만 원)']}만원"
         return p
     display_df['실거래가(보증금)'] = display_df.apply(make_price_str, axis=1)
     
-    # 2. 모바일에서 보여질 필수 컬럼 순서
     if is_apt:
         cols_to_show = ["계약일", "단지명", "전용면적", "층", "거래유형", "실거래가(보증금)"]
     else:
         cols_to_show = ["계약일", "단지명", "전용면적", "층", "실거래가(보증금)"]
         
-    # 3. 스트림릿 공식 인터랙티브 표 (가로 스크롤 & 행 클릭 지원)
+    # 🚨 오타 수정 완료! (single_row -> single-row)
     event = st.dataframe(
         display_df[cols_to_show],
         use_container_width=True,
         hide_index=True,
-        on_select="rerun",           # 행 클릭 시 앱 리로드
-        selection_mode="single_row", # 1줄씩만 선택 가능
-        key=st.session_state.table_key # 뒤로가기 시 클릭 상태 초기화를 위한 키
+        on_select="rerun",           
+        selection_mode="single-row", 
+        key=st.session_state.table_key
     )
     
-    # 4. 유저가 특정 행을 클릭(선택)했을 때 상세페이지로 정보 넘기기
     if len(event.selection.rows) > 0:
         selected_idx = event.selection.rows[0]
         selected_row = display_df.iloc[selected_idx]
@@ -236,7 +231,6 @@ def render_clickable_list(df, is_apt=True):
         st.session_state.detail_dong = selected_row.get('법정동', '')
         st.session_state.detail_build_year = selected_row.get('건축년도', '0')
         
-        # 상세페이지 차트 진입 전 이전 데이터 초기화
         st.session_state.detail_full_df = pd.DataFrame()
         st.session_state.detail_searched = False
         st.rerun()
@@ -254,7 +248,6 @@ def show_detail_page():
     
     if st.button("⬅️ 이전 목록으로 돌아가기"):
         st.session_state.show_detail = False
-        # 🚨 [핵심] 뒤로가기 누를 때 표 클릭 상태를 박살 내서 꼬임 방지
         st.session_state.table_key = str(uuid.uuid4())
         st.rerun()
         
