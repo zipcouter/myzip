@@ -7,7 +7,11 @@ import requests
 import xml.etree.ElementTree as ET
 import sys
 import uuid
+import urllib3
 from geopy.geocoders import Nominatim
+
+# SSL 경고창 숨기기
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ---------------------------------------------------------
 # ⚙️ 페이지 및 인증키 기본 설정
@@ -24,7 +28,7 @@ with st.sidebar:
     st.write("원하시는 시장을 선택하세요.")
     page = st.radio("조회 메뉴", ["🏢 아파트 실거래가", "🏘️ 비아파트 (오피스텔/빌라 등)"])
     st.write("---")
-    st.caption("v2.4 - Silent API Error Detector Added")
+    st.caption("v2.5 - SSL Bypass & Hard Error Exposer")
     
     if st.button("🔄 앱 캐시 강제 초기화"):
         st.cache_data.clear()
@@ -36,14 +40,14 @@ with st.sidebar:
 @st.cache_data(show_spinner=False)
 def get_sido_list():
     try:
-        res = requests.get("https://grpc-proxy-server-mkvo6j4wsq-du.a.run.app/v1/regcodes?regcode_pattern=*00000000", timeout=5).json()
+        res = requests.get("https://grpc-proxy-server-mkvo6j4wsq-du.a.run.app/v1/regcodes?regcode_pattern=*00000000", timeout=5, verify=False).json()
         return {item['name']: item['code'][:2] for item in res.get('regcodes', [])}
     except: return {"서울특별시": "11", "경기도": "41"}
 
 @st.cache_data(show_spinner=False)
 def get_sigungu_list(sido_code):
     try:
-        res = requests.get(f"https://grpc-proxy-server-mkvo6j4wsq-du.a.run.app/v1/regcodes?regcode_pattern={sido_code}*00000&is_ignore_zero=true", timeout=5).json()
+        res = requests.get(f"https://grpc-proxy-server-mkvo6j4wsq-du.a.run.app/v1/regcodes?regcode_pattern={sido_code}*00000&is_ignore_zero=true", timeout=5, verify=False).json()
         sigungu_dict = {}
         for item in res.get('regcodes', []):
             code = item['code']
@@ -56,7 +60,7 @@ def get_sigungu_list(sido_code):
 @st.cache_data(show_spinner=False)
 def get_dong_list(sigungu_code):
     try:
-        res = requests.get(f"https://grpc-proxy-server-mkvo6j4wsq-du.a.run.app/v1/regcodes?regcode_pattern={sigungu_code}*&is_ignore_zero=true", timeout=5).json()
+        res = requests.get(f"https://grpc-proxy-server-mkvo6j4wsq-du.a.run.app/v1/regcodes?regcode_pattern={sigungu_code}*&is_ignore_zero=true", timeout=5, verify=False).json()
         dongs = []
         for item in res.get('regcodes', []):
             if item['code'][5:] == "00000": continue
@@ -134,7 +138,7 @@ def get_months_from_dates(start_d, end_d):
     return months
 
 # =====================================================================
-# 🚨 [수술 완료] 클라우드 전용 API (숨겨진 권한 에러 완벽 적발 로직 추가)
+# 🚨 클라우드 전용 API (SSL 검증 무시 및 에러 추적기 장착)
 # =====================================================================
 def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_type):
     if not lawd_cd: return None, "지역 코드를 찾을 수 없습니다."
@@ -149,32 +153,31 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_typ
         urls_to_try = []
         if is_rent:
             urls_to_try.append(f"https://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent?serviceKey={MOLIT_API_KEY}&LAWD_CD={lawd_cd}&DEAL_YMD={ymd}&numOfRows=1000")
-            urls_to_try.append(f"https://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptRent?serviceKey={MOLIT_API_KEY}&LAWD_CD={lawd_cd}&DEAL_YMD={ymd}&numOfRows=1000")
+            urls_to_try.append(f"http://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent?serviceKey={MOLIT_API_KEY}&LAWD_CD={lawd_cd}&DEAL_YMD={ymd}&numOfRows=1000")
         else:
             urls_to_try.append(f"https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey={MOLIT_API_KEY}&LAWD_CD={lawd_cd}&DEAL_YMD={ymd}&numOfRows=1000")
-            urls_to_try.append(f"https://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTradeDev?serviceKey={MOLIT_API_KEY}&LAWD_CD={lawd_cd}&DEAL_YMD={ymd}&numOfRows=1000")
+            urls_to_try.append(f"http://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey={MOLIT_API_KEY}&LAWD_CD={lawd_cd}&DEAL_YMD={ymd}&numOfRows=1000")
         
         success_for_month = False
         
         for url in urls_to_try:
             if success_for_month: break
             try:
-                res = requests.get(url, headers=headers, timeout=15)
+                # 🚨 SSL 에러 무시 (verify=False)
+                res = requests.get(url, headers=headers, timeout=15, verify=False)
                 if res.status_code == 200:
                     root = ET.fromstring(res.text)
                     
-                    # 🚨 1. 숨겨진 인증 에러(미가입 키) 강제 적발
                     err_reason = root.find('.//returnReasonCode')
                     if err_reason is not None and err_reason.text.strip() != "00":
-                        last_error_msg = "공공데이터포털에서 [국토교통부_아파트 전월세 자료] API를 추가로 활용 신청하셔야 조회가 가능합니다."
+                        last_error_msg = "공공데이터포털 미승인 키 (전월세 자료 추가 신청 필요)"
                         continue
                         
                     err_msg = root.find('.//errMsg')
                     if err_msg is not None and "SERVICE ERROR" in err_msg.text.upper():
-                        last_error_msg = "공공데이터포털에서 [국토교통부_아파트 전월세 자료] API를 추가로 활용 신청하셔야 조회가 가능합니다."
+                        last_error_msg = "공공데이터포털 미승인 키 (전월세 자료 추가 신청 필요)"
                         continue
 
-                    # 🚨 2. 정상 응답인 경우에만 성공으로 마킹
                     is_api_success = True
                     success_for_month = True
                     
@@ -227,14 +230,15 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_typ
                             "거래금액(만 원)": price, "월세(만 원)": monthly_val
                         })
             except Exception as e:
-                last_error_msg = "서버 연결 지연 (재시도 요망)"
+                # 🚨 에러 원인을 그대로 노출하여 범인 색출
+                last_error_msg = f"연결 거부됨: {str(e)[:100]}"
                 
     if all_data: return pd.DataFrame(all_data), "SUCCESS"
     elif not is_api_success and last_error_msg: return None, last_error_msg
     else: return pd.DataFrame(), "NODATA"
 
 # =====================================================================
-# 🚨 단지명 버튼 UI 완벽 유지 (절대 수정 없음)
+# 🚨 단지명 버튼 UI 완벽 유지
 # =====================================================================
 def render_clickable_list(df, is_apt=True):
     col_ratios = [1.2, 2.5, 1.5, 0.8, 1.5, 1.5]
@@ -579,13 +583,13 @@ else:
                     real_df = real_df.sort_values(by="계약일", ascending=False).reset_index(drop=True)
                     st.session_state.res_df = real_df
                     
-                    if real_df.empty: st.info("해당 기간/조건에 신고된 실거래 데이터가 없습니다. (신고기간 30일 고려 요망)")
+                    if real_df.empty: st.info("해당 기간/조건에 신고된 실거래 데이터가 없습니다.")
                     else: st.success(f"✅ 100% 국토교통부 실제 {trade_type} 데이터 연동 완료!")
                 else:
                     st.session_state.res_df = pd.DataFrame()
-                    # 🚨 에러가 발생했다면 무조건 화면에 붉은 박스로 에러의 원인(API 미가입)을 출력합니다!
+                    # 🚨 에러 출력 최적화: 권한 에러가 나면 숨기지 않고 빨간 박스로 정확히 출력합니다.
                     if has_error and msg != "NODATA": st.error(f"⚠️ 삐빅! {msg}")
-                    else: st.info("해당 기간/조건에 신고된 실거래 데이터가 없습니다. (신고기간 30일 고려 요망)")
+                    else: st.info("해당 기간/조건에 신고된 실거래 데이터가 없습니다.")
 
         if st.session_state.get("apt_searched", False):
             st.write("---")
