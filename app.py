@@ -5,7 +5,9 @@ import numpy as np
 import plotly.graph_objects as go
 import requests
 import xml.etree.ElementTree as ET
+import os
 import sys
+import uuid
 from geopy.geocoders import Nominatim
 
 # ---------------------------------------------------------
@@ -13,14 +15,19 @@ from geopy.geocoders import Nominatim
 # ---------------------------------------------------------
 st.set_page_config(page_title="집카우터 | 실거래가 실시간 조회", layout="wide")
 
+# 대표님의 실제 국토부 API 키
 MOLIT_API_KEY = "bba046226cfdba339da5237b76bfaff8d43c90ab08d4efda3a30f6bb87ab2486"
+
+# 🚨 행 클릭 이벤트를 위한 테이블 고유 키 생성
+if "table_key" not in st.session_state:
+    st.session_state.table_key = str(uuid.uuid4())
 
 with st.sidebar:
     st.title("🚀 집카우터 메뉴")
     st.write("원하시는 시장을 선택하세요.")
     page = st.radio("조회 메뉴", ["🏢 아파트 실거래가", "🏘️ 비아파트 (오피스텔/빌라 등)"])
     st.write("---")
-    st.caption("v1.3 - Detail Page UI Restored & GAP Chart Fixed")
+    st.caption("v1.4 - Mobile Responsive Data Table")
     
     if st.button("🔄 앱 캐시 강제 초기화"):
         st.cache_data.clear()
@@ -177,7 +184,7 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, trade_t
                         "법정동": dong_name, "단지명": apt_name,
                         "전용면적": f"{float(area):.2f}㎡" if area != "0" else "0㎡",
                         "층": f"{floor}층", "건축년도": build_y,
-                        "거래유형": trade_type, "중개거래여부": trade_type_str,
+                        "거래유형": trade_type_str, 
                         "거래금액(만 원)": price, "월세(만 원)": monthly_val
                     })
         except Exception as e: return None, str(e) 
@@ -185,44 +192,57 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, trade_t
     if all_data: return pd.DataFrame(all_data), "SUCCESS"
     else: return pd.DataFrame(), "NODATA"
 
-# 리스트 렌더링
+# =====================================================================
+# 🚨 [완벽 수술] 모바일 완벽 대응 스마트 표(Data Table) 엔진
+# =====================================================================
 def render_clickable_list(df, is_apt=True):
-    col_ratios = [1.2, 2.5, 1.5, 0.8, 1.5, 1.5]
-    headers = ["계약일", "단지명(클릭 시 이동) 👆", "전용면적", "층", "거래유형", "실거래가(보증금)"]
-
-    h_cols = st.columns(col_ratios)
-    for i, header in enumerate(headers):
-        h_cols[i].markdown(f"<div style='text-align: center; color: gray; font-size: 0.9em;'><b>{header}</b></div>", unsafe_allow_html=True)
-    st.markdown("<hr style='margin: 0.5em 0px; border-top: 2px solid #ddd;'>", unsafe_allow_html=True)
+    st.caption("💡 **아래 표의 원하는 행(줄)을 터치**하시면 상세 차트 페이지로 이동합니다.")
     
-    for idx, row in df.iterrows():
-        cols = st.columns(col_ratios)
-        cols[0].markdown(f"<div style='text-align: center; line-height: 2.5;'>{row['계약일']}</div>", unsafe_allow_html=True)
-        if cols[1].button(row['단지명'], key=f"{'apt' if is_apt else 'non'}_btn_{idx}", type="tertiary", use_container_width=True):
-            st.session_state.show_detail = True
-            st.session_state.detail_sido = row.get('시도', '')
-            st.session_state.detail_sigungu = row.get('시군구', '')
-            st.session_state.detail_lawd_cd = row.get('법정동코드', '')
-            st.session_state.detail_apt_name = row['단지명']
-            st.session_state.detail_dong = row.get('법정동', '')
-            st.session_state.detail_build_year = row.get('건축년도', '0')
-            # 상세페이지 진입 시 초기화
-            st.session_state.detail_full_df = pd.DataFrame()
-            st.session_state.detail_searched = False
-            st.rerun()
-        cols[2].markdown(f"<div style='text-align: center; line-height: 2.5;'>{row['전용면적']}</div>", unsafe_allow_html=True)
-        cols[3].markdown(f"<div style='text-align: center; line-height: 2.5;'>{row['층']}</div>", unsafe_allow_html=True)
-        cols[4].markdown(f"<div style='text-align: center; line-height: 2.5;'>{row['중개거래여부']}</div>", unsafe_allow_html=True)
+    display_df = df.copy()
+    
+    # 1. 가격 표기 포맷팅
+    def make_price_str(row):
+        p = format_to_korean_currency(row['거래금액(만 원)'])
+        if row.get('월세(만 원)', 0) > 0: return f"{p} / {row['월세(만 원)']}만원"
+        return p
+    display_df['실거래가(보증금)'] = display_df.apply(make_price_str, axis=1)
+    
+    # 2. 모바일에서 보여질 필수 컬럼 순서
+    if is_apt:
+        cols_to_show = ["계약일", "단지명", "전용면적", "층", "거래유형", "실거래가(보증금)"]
+    else:
+        cols_to_show = ["계약일", "단지명", "전용면적", "층", "실거래가(보증금)"]
         
-        price_str = format_to_korean_currency(row['거래금액(만 원)'])
-        if row.get('월세(만 원)', 0) > 0:
-            price_str = f"{price_str} / {row['월세(만 원)']}만원"
-            
-        cols[5].markdown(f"<div style='text-align: center; line-height: 2.5; font-weight: bold; color: #E74C3C;'>{price_str}</div>", unsafe_allow_html=True)
-        st.markdown("<hr style='margin: 0px; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
+    # 3. 스트림릿 공식 인터랙티브 표 (가로 스크롤 & 행 클릭 지원)
+    event = st.dataframe(
+        display_df[cols_to_show],
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",           # 행 클릭 시 앱 리로드
+        selection_mode="single_row", # 1줄씩만 선택 가능
+        key=st.session_state.table_key # 뒤로가기 시 클릭 상태 초기화를 위한 키
+    )
+    
+    # 4. 유저가 특정 행을 클릭(선택)했을 때 상세페이지로 정보 넘기기
+    if len(event.selection.rows) > 0:
+        selected_idx = event.selection.rows[0]
+        selected_row = display_df.iloc[selected_idx]
+        
+        st.session_state.show_detail = True
+        st.session_state.detail_sido = selected_row.get('시도', '')
+        st.session_state.detail_sigungu = selected_row.get('시군구', '')
+        st.session_state.detail_lawd_cd = selected_row.get('법정동코드', '')
+        st.session_state.detail_apt_name = selected_row['단지명']
+        st.session_state.detail_dong = selected_row.get('법정동', '')
+        st.session_state.detail_build_year = selected_row.get('건축년도', '0')
+        
+        # 상세페이지 차트 진입 전 이전 데이터 초기화
+        st.session_state.detail_full_df = pd.DataFrame()
+        st.session_state.detail_searched = False
+        st.rerun()
 
 # =====================================================================
-# 🚨 상세페이지 (기존 기획 100% 복구: GAP 분석 & 수동 조건검색)
+# 🚨 상세페이지 (과거 1년 백엔드 조회 + 100% 실제 데이터)
 # =====================================================================
 def show_detail_page():
     apt_name = st.session_state.get("detail_apt_name", "이름없음")
@@ -234,6 +254,8 @@ def show_detail_page():
     
     if st.button("⬅️ 이전 목록으로 돌아가기"):
         st.session_state.show_detail = False
+        # 🚨 [핵심] 뒤로가기 누를 때 표 클릭 상태를 박살 내서 꼬임 방지
+        st.session_state.table_key = str(uuid.uuid4())
         st.rerun()
         
     st.title(f"🏢 {apt_name} 상세 분석")
@@ -261,7 +283,6 @@ def show_detail_page():
 
     st.write("---")
 
-    # 🚨 [수술 1] 대표님이 원하셨던 '수동 조건 검색' 폼 완벽 복구
     st.subheader("🔍 단지 상세 조회 및 GAP 차트 설정")
     cond_col1, cond_col2 = st.columns([1, 1])
     with cond_col1:
@@ -279,18 +300,17 @@ def show_detail_page():
 
             detail_dfs = []
             
-            # 매매 데이터 수집
             if chart_view_type in ["매매", "매매+전세 통합"]:
                 df_sale, _ = fetch_real_apt_data(sido, sigungu, lawd_cd, months_to_fetch, "매매")
                 if df_sale is not None and not df_sale.empty:
+                    df_sale['실제거래타입'] = '매매'
                     detail_dfs.append(df_sale[df_sale['단지명'] == apt_name])
 
-            # 전세 데이터 수집
             if chart_view_type in ["전세", "매매+전세 통합"]:
                 df_rent, _ = fetch_real_apt_data(sido, sigungu, lawd_cd, months_to_fetch, "전세")
                 if df_rent is not None and not df_rent.empty:
-                    # 순수 전세만 필터링
-                    df_rent_only = df_rent[(df_rent['단지명'] == apt_name) & (df_rent['월세(만 원)'] == 0)]
+                    df_rent_only = df_rent[(df_rent['단지명'] == apt_name) & (df_rent['월세(만 원)'] == 0)].copy()
+                    df_rent_only['실제거래타입'] = '전세'
                     detail_dfs.append(df_rent_only)
 
             if detail_dfs:
@@ -301,7 +321,6 @@ def show_detail_page():
             st.session_state.detail_chart_view = chart_view_type
             st.session_state.detail_searched = True
 
-    # 🚨 조회 버튼을 누른 이후에만 차트와 리스트 렌더링
     if st.session_state.get("detail_searched", False):
         detail_full_df = st.session_state.get("detail_full_df", pd.DataFrame())
         current_view_type = st.session_state.get("detail_chart_view", "매매")
@@ -310,25 +329,23 @@ def show_detail_page():
             st.write("---")
             st.subheader("📈 시세 흐름 및 GAP 분석")
 
-            # 🚨 [수술 2] 진짜 데이터로 계산하는 '매매+전세 GAP 차트' 완벽 복구
             fig = go.Figure()
             df_for_chart = detail_full_df.copy()
-            df_for_chart['계약월'] = df_for_chart['계약일'].str[:7] # 월별 평균으로 GAP 계산
+            df_for_chart['계약월'] = df_for_chart['계약일'].str[:7]
 
             sale_agg = pd.DataFrame()
             rent_agg = pd.DataFrame()
 
             if current_view_type in ["매매", "매매+전세 통합"]:
-                df_sale_c = df_for_chart[df_for_chart['거래유형'] == '매매']
+                df_sale_c = df_for_chart[df_for_chart['실제거래타입'] == '매매']
                 if not df_sale_c.empty:
                     sale_agg = df_sale_c.groupby('계약월')['거래금액(만 원)'].mean().reset_index()
 
             if current_view_type in ["전세", "매매+전세 통합"]:
-                df_rent_c = df_for_chart[df_for_chart['거래유형'] == '전세']
+                df_rent_c = df_for_chart[df_for_chart['실제거래타입'] == '전세']
                 if not df_rent_c.empty:
                     rent_agg = df_rent_c.groupby('계약월')['거래금액(만 원)'].mean().reset_index()
 
-            # GAP 차트 렌더링 (마우스 오버 시 GAP 출력)
             if current_view_type == "매매+전세 통합" and not sale_agg.empty and not rent_agg.empty:
                 merged = pd.merge(sale_agg, rent_agg, on='계약월', how='outer', suffixes=('_매매', '_전세')).sort_values('계약월')
                 merged['거래금액(만 원)_매매'] = merged['거래금액(만 원)_매매'].interpolate(method='linear').ffill().bfill()
@@ -350,16 +367,15 @@ def show_detail_page():
             st.write("---")
             st.subheader("📋 실거래가 상세 내역 필터")
             
-            # 🚨 [수술 3] 조회된 데이터를 바탕으로 평형/거래유형 즉각 필터링
             list_col1, list_col2 = st.columns(2)
-            trade_opts = ["전체보기"] + sorted(detail_full_df['거래유형'].unique().tolist())
+            trade_opts = ["전체보기"] + sorted(detail_full_df['실제거래타입'].unique().tolist())
             pyeong_opts = ["전체보기"] + sorted(detail_full_df['전용면적'].unique().tolist())
             
             with list_col1: list_trade = st.selectbox("거래 유형 필터", trade_opts, key="detail_list_trade")
             with list_col2: list_pyeong = st.selectbox("평형대 필터", pyeong_opts, key="detail_list_pyeong")
                 
             filtered_data = detail_full_df.copy()
-            if list_trade != "전체보기": filtered_data = filtered_data[filtered_data["거래유형"] == list_trade]
+            if list_trade != "전체보기": filtered_data = filtered_data[filtered_data["실제거래타입"] == list_trade]
             if list_pyeong != "전체보기": filtered_data = filtered_data[filtered_data["전용면적"] == list_pyeong]
                 
             if filtered_data.empty: 
@@ -372,8 +388,8 @@ def show_detail_page():
                     return p
                     
                 filtered_data['실거래가(보증금)'] = filtered_data.apply(make_price_str, axis=1)
-                display_list = filtered_data[["계약일", "전용면적", "층", "중개거래여부", "실거래가(보증금)"]]
-                st.dataframe(display_list, use_container_width=True, hide_index=True, column_config={"실거래가(보증금)": st.column_config.TextColumn("실거래가(보증금/월세)", width="medium"), "중개거래여부": st.column_config.TextColumn("거래유형", width="small")})
+                display_list = filtered_data[["계약일", "전용면적", "층", "거래유형", "실거래가(보증금)"]]
+                st.dataframe(display_list, use_container_width=True, hide_index=True, column_config={"실거래가(보증금)": st.column_config.TextColumn("실거래가(보증금/월세)", width="medium"), "거래유형": st.column_config.TextColumn("거래유형", width="small")})
         else:
             st.warning("선택하신 기간/항목 내 실거래 데이터가 없습니다.")
 
