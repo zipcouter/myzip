@@ -27,7 +27,7 @@ with st.sidebar:
     st.write("원하시는 시장을 선택하세요.")
     page = st.radio("조회 메뉴", ["🏢 아파트 실거래가", "🏘️ 비아파트 (오피스텔/빌라 등)"])
     st.write("---")
-    st.caption("v2.8 - Building Ledger Error Tracer Enabled")
+    st.caption("v2.9 - Building Ledger Dual-Engine & HTTP Status Tracer")
     
     if st.button("🔄 앱 캐시 강제 초기화"):
         st.cache_data.clear()
@@ -137,7 +137,7 @@ def get_months_from_dates(start_d, end_d):
     return months
 
 # =====================================================================
-# 🚨 [수술 적용] 건축물대장 표제부 연동 엔진 (에러 원인 추적기 장착)
+# 🚨 [수술 적용] 건축물대장 표제부 듀얼-엔진 및 HTTP 에러 추적
 # =====================================================================
 @st.cache_data(show_spinner=False)
 def fetch_building_ledger(sigungu_cd, dong_name, jibun):
@@ -162,53 +162,66 @@ def fetch_building_ledger(sigungu_cd, dong_name, jibun):
     bun = parts[0].zfill(4) if len(parts) > 0 else "0000"
     ji = parts[1].zfill(4) if len(parts) > 1 else "0000"
     
-    url = f"https://apis.data.go.kr/1613000/BldRgstService_v2/getBrTitleInfo?serviceKey={MOLIT_API_KEY}&sigunguCd={sigungu_cd}&bjdongCd={bjdong_cd}&platGbCd={plat_gb_cd}&bun={bun}&ji={ji}&numOfRows=10"
+    # 🚨 듀얼 통신망 (HTTPS 실패 시 HTTP 우회)
+    urls_to_try = [
+        f"https://apis.data.go.kr/1613000/BldRgstService_v2/getBrTitleInfo?serviceKey={MOLIT_API_KEY}&sigunguCd={sigungu_cd}&bjdongCd={bjdong_cd}&platGbCd={plat_gb_cd}&bun={bun}&ji={ji}&numOfRows=10",
+        f"http://apis.data.go.kr/1613000/BldRgstService_v2/getBrTitleInfo?serviceKey={MOLIT_API_KEY}&sigunguCd={sigungu_cd}&bjdongCd={bjdong_cd}&platGbCd={plat_gb_cd}&bun={bun}&ji={ji}&numOfRows=10"
+    ]
     
-    try:
-        res = requests.get(url, timeout=10, verify=False)
-        if res.status_code == 200:
-            root = ET.fromstring(res.text)
-            
-            # 에러 원인 딥서치
-            err_reason = root.find('.//returnReasonCode')
-            if err_reason is not None and err_reason.text.strip() != "00":
-                return None, None, None, "API 키 미승인 (동기화 지연 또는 키 오류)"
+    last_err = "알 수 없는 에러"
+    for url in urls_to_try:
+        try:
+            res = requests.get(url, timeout=10, verify=False)
+            if res.status_code == 200:
+                root = ET.fromstring(res.text)
                 
-            err_msg = root.find('.//errMsg')
-            if err_msg is not None and "SERVICE ERROR" in err_msg.text.upper():
-                return None, None, None, "API 키 미승인 (동기화 지연 또는 키 오류)"
-
-            result_code = root.find('.//resultCode')
-            if result_code is not None and result_code.text.strip() not in ["00", "0"]:
-                return None, None, None, f"국토부 응답 에러: {root.find('.//resultMsg').text}"
-            
-            items = root.findall('.//item')
-            if items:
-                tot_pkng = 0
-                vl_rat = 0.0
-                bc_rat = 0.0
-                for item in items:
-                    main_atch_gb_cd = get_xml_text(item, ['mainAtchGbCd'], "")
-                    if main_atch_gb_cd in ["0", "1", ""]: 
-                        try: tot_pkng += int(get_xml_text(item, ['totPkngCnt'], "0"))
-                        except: pass
-                        try: 
-                            vl_rat = max(vl_rat, float(get_xml_text(item, ['vlRat'], "0")))
-                            bc_rat = max(bc_rat, float(get_xml_text(item, ['bcRat'], "0")))
-                        except: pass
-                
-                if tot_pkng == 0 and vl_rat == 0.0:
-                    tot_pkng = get_xml_text(items[0], ['totPkngCnt'], "0")
-                    vl_rat = get_xml_text(items[0], ['vlRat'], "0")
-                    bc_rat = get_xml_text(items[0], ['bcRat'], "0")
+                err_reason = root.find('.//returnReasonCode')
+                if err_reason is not None and err_reason.text.strip() != "00":
+                    last_err = "API 키 미승인 (동기화 지연 또는 키 오류)"
+                    continue
                     
-                return tot_pkng, f"{float(vl_rat)}%", f"{float(bc_rat)}%", "SUCCESS"
+                err_msg = root.find('.//errMsg')
+                if err_msg is not None and "SERVICE ERROR" in err_msg.text.upper():
+                    last_err = "API 키 미승인 (동기화 지연 또는 키 오류)"
+                    continue
+
+                result_code = root.find('.//resultCode')
+                if result_code is not None and result_code.text.strip() not in ["00", "0"]:
+                    last_err = f"국토부 응답 에러: {root.find('.//resultMsg').text}"
+                    continue
+                
+                items = root.findall('.//item')
+                if items:
+                    tot_pkng = 0
+                    vl_rat = 0.0
+                    bc_rat = 0.0
+                    for item in items:
+                        main_atch_gb_cd = get_xml_text(item, ['mainAtchGbCd'], "")
+                        if main_atch_gb_cd in ["0", "1", ""]: 
+                            try: tot_pkng += int(get_xml_text(item, ['totPkngCnt'], "0"))
+                            except: pass
+                            try: 
+                                vl_rat = max(vl_rat, float(get_xml_text(item, ['vlRat'], "0")))
+                                bc_rat = max(bc_rat, float(get_xml_text(item, ['bcRat'], "0")))
+                            except: pass
+                    
+                    if tot_pkng == 0 and vl_rat == 0.0:
+                        tot_pkng = get_xml_text(items[0], ['totPkngCnt'], "0")
+                        vl_rat = get_xml_text(items[0], ['vlRat'], "0")
+                        bc_rat = get_xml_text(items[0], ['bcRat'], "0")
+                        
+                    return tot_pkng, f"{float(vl_rat)}%", f"{float(bc_rat)}%", "SUCCESS"
+                else:
+                    last_err = f"대장 데이터 없음 (지번: {bjdong_cd}-{plat_gb_cd}-{bun}-{ji})"
+                    # 데이터가 진짜 없는 경우는 루프 종료
+                    return None, None, None, last_err
             else:
-                return None, None, None, f"대장 데이터 없음 (지번: {bjdong_cd}-{plat_gb_cd}-{bun}-{ji})"
-    except Exception as e: 
-        return None, None, None, f"통신 에러: {str(e)[:50]}"
+                # 🚨 HTTP 상태 코드 강제 적발
+                last_err = f"서버 거절 (HTTP {res.status_code})"
+        except Exception as e: 
+            last_err = f"통신 에러: {str(e)[:50]}"
     
-    return None, None, None, "알 수 없는 에러"
+    return None, None, None, last_err
 
 # =====================================================================
 # 🚨 클라우드 전용 최신 API (실거래가 - 기존 코드 100% 보존)
@@ -356,7 +369,7 @@ def render_clickable_list(df, is_apt=True):
         st.markdown("<hr style='margin: 0px; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
 
 # =====================================================================
-# 🚨 상세페이지 (에러 메시지 표출 적용)
+# 🚨 상세페이지 (건축물대장 통신 및 차트 억 단위/한글화 완벽 적용)
 # =====================================================================
 def show_detail_page():
     apt_name = st.session_state.get("detail_apt_name", "이름없음")
@@ -385,14 +398,15 @@ def show_detail_page():
         st.write(f"**📍 법정동 주소:** {sido} {sigungu} {dong_name} {jibun}")
         st.write(f"**📅 준공일:** {build_str}")
         
+        # 🚨 건축물대장 실시간 호출
         with st.spinner("📡 건축물대장 스펙 조회 중..."):
             pkng, vl, bc, debug_msg = fetch_building_ledger(lawd_cd, dong_name, jibun)
         
-        # 🚨 [에러 생중계] 실패 원인을 붉은 글씨로 노출합니다
         if pkng is not None:
             st.write(f"**🚗 총 주차대수:** {pkng}대")
             st.write(f"**🏢 용적률 / 🏗️ 건폐율:** {vl} / {bc}")
         else:
+            # 🚨 원인을 뭉뚱그리지 않고 있는 그대로 화면에 적나라하게 띄움
             st.write(f"**🚗 주차대수:** 조회 불가 🚨({debug_msg})")
             st.write(f"**🏢 용적률 / 🏗️ 건폐율:** 조회 불가")
         
@@ -477,12 +491,14 @@ def show_detail_page():
             fig = go.Figure()
             df_for_chart = detail_full_df.copy()
             
+            # 🚨 한글 날짜 형식 변환
             df_for_chart['계약월_한글'] = df_for_chart['계약일'].str[:4] + "년 " + df_for_chart['계약일'].str[5:7] + "월"
             df_for_chart['계약월'] = df_for_chart['계약일'].str[:7]
 
             sale_agg = pd.DataFrame()
             rent_agg = pd.DataFrame()
 
+            # 🚨 만원을 '억 원' 단위로 변환
             if current_view_type in ["매매", "매매+전세 통합"]:
                 df_sale_c = df_for_chart[df_for_chart['거래유형'] == '매매']
                 if not df_sale_c.empty: 
