@@ -24,7 +24,7 @@ with st.sidebar:
     st.write("원하시는 시장을 선택하세요.")
     page = st.radio("조회 메뉴", ["🏢 아파트 실거래가", "🏘️ 비아파트 (오피스텔/빌라 등)"])
     st.write("---")
-    st.caption("v1.7 - Period Filter & Rent Data Fixed")
+    st.caption("v1.8 - NameError Fixed (Recent Months)")
     
     if st.button("🔄 앱 캐시 강제 초기화"):
         st.cache_data.clear()
@@ -80,7 +80,7 @@ def get_lat_lng_free(sido, sigungu, dong, apt_name):
     return None, None
 
 # ---------------------------------------------------------
-# 🌟 유틸리티 함수들 (기간 설정 추가)
+# 🌟 유틸리티 함수들 (기간 설정 추가 및 누락 함수 복구)
 # ---------------------------------------------------------
 PERIOD_OPTIONS = ["오늘", "이번 달", "최근 3개월", "최근 6개월", "최근 1년", "직접 설정"]
 
@@ -107,6 +107,17 @@ def get_xml_text(item, tags, default=""):
         if node is not None and node.text: return node.text.strip()
     return default
 
+# 🚨 [수술 완료] 실수로 지웠던 1개월~1년 단위 계산 함수 복구!
+def get_recent_months(n):
+    today = datetime.date.today()
+    months = []
+    for i in range(n):
+        month = today.month - i
+        year = today.year
+        while month <= 0: month += 12; year -= 1
+        months.append(f"{year}{month:02d}")
+    return months
+
 def get_months_from_dates(start_d, end_d):
     start_y, start_m = start_d.year, start_d.month
     end_y, end_m = end_d.year, end_d.month
@@ -124,7 +135,6 @@ def get_months_from_dates(start_d, end_d):
 # 🚨 국토부 통신 엔진 (매매/전월세 통합 판단 로직 강화)
 # =====================================================================
 def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_type):
-    # api_type: "매매" or "전월세"
     if not lawd_cd: return None, "지역 코드를 찾을 수 없습니다."
     all_data = []
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -170,7 +180,6 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_typ
                         try: monthly_val = int(monthly_str)
                         except: monthly_val = 0
                         
-                        # 🚨 [핵심] 월세금액 유무로 전세/월세 자동 분류
                         actual_trade_type = "월세" if monthly_val > 0 else "전세"
                     else:
                         price_str = get_xml_text(item, ['거래금액', 'dealAmount'], "0").replace(',', '').strip()
@@ -263,7 +272,6 @@ def show_detail_page():
         st.subheader("📌 단지 기본 정보")
         st.write(f"**📍 법정동 주소:** {sido} {sigungu} {dong_name}")
         st.write(f"**📅 준공일:** {build_str}")
-        # 🚨 [수술 6] 요청하신 주차대수, 용적률, 건폐율 자리 확보 (2단계 건축물대장 API 연동 예정)
         st.write(f"**🚗 주차대수:** 건축물대장 연동 대기중")
         st.write(f"**🏢 용적률 / 🏗️ 건폐율:** 건축물대장 연동 대기중")
         
@@ -277,7 +285,6 @@ def show_detail_page():
 
     st.write("---")
 
-    # 🚨 [수술 4] 상세페이지 조회 조건도 메인페이지와 완벽히 통일
     st.subheader("🔍 단지 상세 조회 및 GAP 차트 설정")
     cond_col1, cond_col2, cond_col3 = st.columns([1.5, 1, 1])
     with cond_col1:
@@ -292,7 +299,6 @@ def show_detail_page():
     if st.button("📊 시세 및 실거래가 조회", type="primary", use_container_width=True):
         with st.spinner(f"📡 {apt_name}의 실제 데이터를 분석 중입니다..."):
             
-            # 날짜 및 개월 수 계산 로직
             start_date, end_date = None, None
             if chart_period == "오늘":
                 start_date = end_date = datetime.date.today()
@@ -308,12 +314,11 @@ def show_detail_page():
                 if "1년" in chart_period: n = 12
                 elif "6개월" in chart_period: n = 6
                 elif "3개월" in chart_period: n = 3
-                else: n = 1 # 이번 달
+                else: n = 1 
                 months_to_fetch = get_recent_months(n)
 
             detail_dfs = []
             
-            # 차트 항목에 관계없이 "매매"와 "전월세" 데이터를 모두 긁어와서 표에 보여줍니다 (월세 탭 부활)
             df_sale, _ = fetch_real_apt_data(sido, sigungu, lawd_cd, months_to_fetch, "매매")
             if df_sale is not None and not df_sale.empty:
                 detail_dfs.append(df_sale[df_sale['단지명'] == apt_name])
@@ -325,7 +330,6 @@ def show_detail_page():
             if detail_dfs:
                 full_df = pd.concat(detail_dfs, ignore_index=True)
                 
-                # 🚨 [수술 1] 오늘 / 직접 설정 시 정확한 날짜만 자르기
                 if chart_period == "오늘":
                     today_str = datetime.date.today().strftime("%Y-%m-%d")
                     full_df = full_df[full_df['계약일'] == today_str]
@@ -385,7 +389,6 @@ def show_detail_page():
             st.write("---")
             st.subheader("📋 실거래가 상세 내역 필터")
             
-            # 🚨 [수술 5] 표 필터에 매매, 전세, 월세가 모두 표시됩니다
             list_col1, list_col2 = st.columns(2)
             trade_opts = ["전체보기"] + sorted(detail_full_df['거래유형'].unique().tolist())
             pyeong_opts = ["전체보기"] + sorted(detail_full_df['전용면적'].unique().tolist())
@@ -468,7 +471,6 @@ else:
             st.session_state.apt_display_loc = f"{sido_name} {sigungu_name if sigungu_name != '전체 (시/도 단위)' else '전체'} {dong_name if dong_name not in ['전체 (구 단위)', '전체 (시/도 단위)'] else ''}".strip()
             st.session_state.apt_trade_type = trade_type
             
-            # 🚨 [수술 1] 메인 페이지 정확한 기간 필터링 로직
             start_date, end_date = None, None
             if period == "오늘":
                 start_date = end_date = datetime.date.today()
@@ -501,7 +503,6 @@ else:
                 my_bar = st.progress(0, text=progress_text) if len(targets) > 1 else None
                 
                 for i, (sgg_name, l_cd) in enumerate(targets):
-                    # 전세, 월세 선택 시 '전월세' API 호출 후 필터링
                     api_target = "전월세" if trade_type in ["전세", "월세"] else "매매"
                     df, msg = fetch_real_apt_data(sido_name, sgg_name, l_cd, months_to_fetch, api_target)
                     if df is not None and not df.empty: all_fetched_dfs.append(df)
@@ -515,10 +516,8 @@ else:
                 if all_fetched_dfs:
                     real_df = pd.concat(all_fetched_dfs, ignore_index=True)
                     
-                    # 🚨 선택한 거래 유형(전세/월세)만 정확히 잘라내기
                     real_df = real_df[real_df['거래유형'] == trade_type]
                     
-                    # 🚨 오늘 / 직접 설정 날짜 정확히 자르기
                     if period == "오늘":
                         today_str = datetime.date.today().strftime("%Y-%m-%d")
                         real_df = real_df[real_df['계약일'] == today_str]
