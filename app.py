@@ -24,7 +24,7 @@ with st.sidebar:
     st.write("원하시는 시장을 선택하세요.")
     page = st.radio("조회 메뉴", ["🏢 아파트 실거래가", "🏘️ 비아파트 (오피스텔/빌라 등)"])
     st.write("---")
-    st.caption("v1.9 - Cloud Server Connection Fixed (1613000)")
+    st.caption("v2.0 - Area Filter & Rent Parsing Maxmized")
     
     if st.button("🔄 앱 캐시 강제 초기화"):
         st.cache_data.clear()
@@ -80,7 +80,7 @@ def get_lat_lng_free(sido, sigungu, dong, apt_name):
     return None, None
 
 # ---------------------------------------------------------
-# 🌟 유틸리티 함수들 (1.8버전 완벽 유지)
+# 🌟 유틸리티 함수들
 # ---------------------------------------------------------
 PERIOD_OPTIONS = ["오늘", "이번 달", "최근 3개월", "최근 6개월", "최근 1년", "직접 설정"]
 
@@ -131,7 +131,7 @@ def get_months_from_dates(start_d, end_d):
     return months
 
 # =====================================================================
-# 🚨 클라우드 전용 최신 API 통신 엔진 (HTTPS + 1613000)
+# 🚨 클라우드 전용 최신 API (전월세 탐지망 3배 강화)
 # =====================================================================
 def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_type):
     if not lawd_cd: return None, "지역 코드를 찾을 수 없습니다."
@@ -140,14 +140,13 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_typ
     is_rent = (api_type == "전월세")
     
     for ymd in target_months:
-        # 🚨 [수술 완료] 클라우드 IP 차단을 막기 위해 최신 HTTPS 통합 서버로 교체
         if is_rent:
             url = f"https://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent?serviceKey={MOLIT_API_KEY}&LAWD_CD={lawd_cd}&DEAL_YMD={ymd}&numOfRows=1000"
         else:
             url = f"https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey={MOLIT_API_KEY}&LAWD_CD={lawd_cd}&DEAL_YMD={ymd}&numOfRows=1000"
         
         try:
-            res = requests.get(url, headers=headers, timeout=15)
+            res = requests.get(url, headers=headers, timeout=20)
             if res.status_code == 200:
                 root = ET.fromstring(res.text)
                 result_code = root.find('.//resultCode')
@@ -158,7 +157,7 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_typ
                 for item in root.findall('.//item'):
                     apt_name = get_xml_text(item, ['aptNm', '아파트', '단지'], "이름없음")
                     dong_name = get_xml_text(item, ['umdNm', '법정동'], "")
-                    area = get_xml_text(item, ['excluUseAr', '전용면적'], "0")
+                    area = get_xml_text(item, ['excluUseAr', 'exclUseAr', '전용면적'], "0")
                     floor = get_xml_text(item, ['floor', '층'], "0")
                     y = get_xml_text(item, ['dealYear', '년'], "2026")
                     m = get_xml_text(item, ['dealMonth', '월'], "01").zfill(2)
@@ -173,9 +172,10 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_typ
                     
                     monthly_val = 0
                     if is_rent:
-                        # 🚨 최신 API 태그(deposit, monthlyRent)로 정밀 타격
-                        deposit_str = get_xml_text(item, ['deposit', '보증금액'], "0").replace(',', '').strip()
-                        monthly_str = get_xml_text(item, ['monthlyRent', '월세금액'], "0").replace(',', '').strip()
+                        # 🚨 [수술 완료] 전월세 태그명 모든 경우의 수 완벽 탐지
+                        deposit_str = get_xml_text(item, ['deposit', '보증금액', '보증금', '전세금'], "0").replace(',', '').strip()
+                        monthly_str = get_xml_text(item, ['monthlyRent', '월세금액', '월세'], "0").replace(',', '').strip()
+                        
                         try: price = int(deposit_str)
                         except: price = 0
                         try: monthly_val = int(monthly_str)
@@ -188,65 +188,67 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_typ
                         except: price = 0
                         actual_trade_type = "매매"
 
-                    if price > 0 or monthly_val > 0:
-                        all_data.append({
-                            "계약일": f"{y}-{m}-{d}",
-                            "시도": sido_name, "시군구": sigungu_name, "법정동코드": lawd_cd,
-                            "법정동": dong_name, "단지명": apt_name,
-                            "전용면적": f"{float(area):.2f}㎡" if area != "0" else "0㎡",
-                            "층": f"{floor}층", "건축년도": build_y,
-                            "거래유형": actual_trade_type, 
-                            "중개거래여부": trade_type_str,
-                            "거래금액(만 시)": price, "월세(만 원)": monthly_val, "거래금액(만 원)": price # 호환성 유지
-                        })
+                    # 🚨 0원이라도 무조건 표출하여 증발 방지
+                    all_data.append({
+                        "계약일": f"{y}-{m}-{d}",
+                        "시도": sido_name, "시군구": sigungu_name, "법정동코드": lawd_cd,
+                        "법정동": dong_name, "단지명": apt_name,
+                        "전용면적": f"{float(area):.2f}㎡" if area != "0" else "0㎡",
+                        "층": f"{floor}층", "건축년도": build_y,
+                        "거래유형": actual_trade_type, 
+                        "중개거래여부": trade_type_str,
+                        "거래금액(만 원)": price, "월세(만 원)": monthly_val
+                    })
         except Exception as e: return None, str(e) 
             
     if all_data: return pd.DataFrame(all_data), "SUCCESS"
     else: return pd.DataFrame(), "NODATA"
 
 # =====================================================================
-# 🌟 리스트 렌더링 로직 (단지명 버튼 유지)
+# 🌟 리스트 렌더링 로직 (모바일 스마트 표)
 # =====================================================================
 def render_clickable_list(df, is_apt=True):
-    col_ratios = [1.2, 2.5, 1.5, 0.8, 1.5, 1.5]
-    headers = ["계약일", "단지명(클릭 시 이동) 👆", "전용면적", "층", "거래유형", "실거래가(보증금)"]
-
-    h_cols = st.columns(col_ratios)
-    for i, header in enumerate(headers):
-        h_cols[i].markdown(f"<div style='text-align: center; color: gray; font-size: 0.9em;'><b>{header}</b></div>", unsafe_allow_html=True)
-    st.markdown("<hr style='margin: 0.5em 0px; border-top: 2px solid #ddd;'>", unsafe_allow_html=True)
+    st.caption("💡 **아래 표의 원하는 행(줄)을 터치**하시면 상세 차트 페이지로 이동합니다.")
     
     display_df = df.copy().reset_index(drop=True)
     
-    for idx, row in display_df.iterrows():
-        cols = st.columns(col_ratios)
-        cols[0].markdown(f"<div style='text-align: center; line-height: 2.5;'>{row['계약일']}</div>", unsafe_allow_html=True)
+    def make_price_str(row):
+        p = format_to_korean_currency(row['거래금액(만 원)'])
+        if row.get('월세(만 원)', 0) > 0: return f"{p} / {row['월세(만 원)']}만원"
+        return p
+    display_df['실거래가(보증금)'] = display_df.apply(make_price_str, axis=1)
+    
+    if is_apt:
+        cols_to_show = ["계약일", "단지명", "전용면적", "층", "거래유형", "실거래가(보증금)"]
+    else:
+        cols_to_show = ["계약일", "단지명", "전용면적", "층", "실거래가(보증금)"]
         
-        if cols[1].button(row['단지명'], key=f"{'apt' if is_apt else 'non'}_btn_{idx}", type="tertiary", use_container_width=True):
-            st.session_state.show_detail = True
-            st.session_state.detail_sido = row.get('시도', '')
-            st.session_state.detail_sigungu = row.get('시군구', '')
-            st.session_state.detail_lawd_cd = row.get('법정동코드', '')
-            st.session_state.detail_apt_name = row['단지명']
-            st.session_state.detail_dong = row.get('법정동', '')
-            st.session_state.detail_build_year = row.get('건축년도', '0')
-            st.session_state.detail_full_df = pd.DataFrame()
-            st.session_state.detail_searched = False
-            st.rerun()
-            
-        cols[2].markdown(f"<div style='text-align: center; line-height: 2.5;'>{row['전용면적']}</div>", unsafe_allow_html=True)
-        cols[3].markdown(f"<div style='text-align: center; line-height: 2.5;'>{row['층']}</div>", unsafe_allow_html=True)
-        cols[4].markdown(f"<div style='text-align: center; line-height: 2.5;'>{row['거래유형']}</div>", unsafe_allow_html=True)
+    event = st.dataframe(
+        display_df[cols_to_show],
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",           
+        selection_mode="single-row", 
+        key=st.session_state.table_key
+    )
+    
+    if len(event.selection.rows) > 0:
+        selected_idx = event.selection.rows[0]
+        selected_row = display_df.iloc[selected_idx]
         
-        price_str = format_to_korean_currency(row['거래금액(만 원)'])
-        if row.get('월세(만 원)', 0) > 0:
-            price_str = f"{price_str} / {row['월세(만 원)']}만원"
-            
-        cols[5].markdown(f"<div style='text-align: center; line-height: 2.5; font-weight: bold; color: #E74C3C;'>{price_str}</div>", unsafe_allow_html=True)
-        st.markdown("<hr style='margin: 0px; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
+        st.session_state.show_detail = True
+        st.session_state.detail_sido = selected_row.get('시도', '')
+        st.session_state.detail_sigungu = selected_row.get('시군구', '')
+        st.session_state.detail_lawd_cd = selected_row.get('법정동코드', '')
+        st.session_state.detail_apt_name = selected_row['단지명']
+        st.session_state.detail_dong = selected_row.get('법정동', '')
+        st.session_state.detail_build_year = selected_row.get('건축년도', '0')
+        st.session_state.detail_full_df = pd.DataFrame()
+        st.session_state.detail_searched = False
+        st.rerun()
 
 # =====================================================================
-# 🚨 상세페이지 (기간 통일 & 주차/용적률/건폐율 UI 반영 유지)
+# 🚨 상세페이지
 # =====================================================================
 def show_detail_page():
     apt_name = st.session_state.get("detail_apt_name", "이름없음")
@@ -258,6 +260,7 @@ def show_detail_page():
     
     if st.button("⬅️ 이전 목록으로 돌아가기"):
         st.session_state.show_detail = False
+        st.session_state.table_key = str(uuid.uuid4())
         st.rerun()
         
     st.title(f"🏢 {apt_name} 상세 분석")
@@ -287,15 +290,15 @@ def show_detail_page():
     st.write("---")
 
     st.subheader("🔍 단지 상세 조회 및 GAP 차트 설정")
-    cond_col1, cond_col2, cond_col3 = st.columns([1.5, 1, 1])
+    cond_col1, cond_col2, cond_col3 = st.columns([1.5, 1, 1.5])
     with cond_col1:
         chart_view_type = st.radio("조회 항목 (차트)", ["매매", "전세", "매매+전세 통합"], horizontal=True)
     with cond_col2:
         chart_period = st.selectbox("📅 조회 기간", PERIOD_OPTIONS, index=1, key="detail_period")
     with cond_col3:
-        custom_dates = None
+        custom_dates_dt = None
         if chart_period == "직접 설정":
-            custom_dates = st.date_input("조회 시작/종료일", [datetime.date.today() - datetime.timedelta(days=30), datetime.date.today()])
+            custom_dates_dt = st.date_input("조회 시작/종료일", [datetime.date.today() - datetime.timedelta(days=30), datetime.date.today()])
 
     if st.button("📊 시세 및 실거래가 조회", type="primary", use_container_width=True):
         with st.spinner(f"📡 {apt_name}의 실제 데이터를 분석 중입니다..."):
@@ -305,8 +308,8 @@ def show_detail_page():
                 start_date = end_date = datetime.date.today()
                 months_to_fetch = [start_date.strftime("%Y%m")]
             elif chart_period == "직접 설정":
-                if custom_dates and len(custom_dates) == 2:
-                    start_date, end_date = custom_dates
+                if custom_dates_dt and len(custom_dates_dt) == 2:
+                    start_date, end_date = custom_dates_dt
                     months_to_fetch = get_months_from_dates(start_date, end_date)
                 else:
                     st.warning("종료일을 정확히 선택해주세요.")
@@ -454,16 +457,19 @@ else:
             selected_apt = st.text_input("🔍 동/단지명 검색 (선택)", placeholder="예: 대치동 또는 은마")
 
         st.write("")
+        
+        # 🚨 [수술 1] UI 꼬임 방지를 위해 평형대와 날짜 선택 분리
         cond_col1, cond_col2, cond_col3 = st.columns(3)
         with cond_col1: trade_type = st.radio("🔄 거래 유형", ["매매", "전세", "월세"], horizontal=True, key="apt_trade")
-        with cond_col2: 
-            period = st.selectbox("📅 조회 기간", PERIOD_OPTIONS, index=1, key="apt_period")
-        with cond_col3: 
-            custom_dates = None
-            if period == "직접 설정":
-                custom_dates = st.date_input("조회 시작/종료일", [datetime.date.today() - datetime.timedelta(days=30), datetime.date.today()])
-            else:
-                pyeong_type = st.selectbox("📐 평형대", ["전체보기", "10평대(59미만)", "20평대(59~84)", "30평대(84이상)"], key="apt_pyeong")
+        with cond_col2: period = st.selectbox("📅 조회 기간", PERIOD_OPTIONS, index=1, key="apt_period")
+        with cond_col3: pyeong_type = st.selectbox("📐 평형대", ["전체보기", "10평대(59미만)", "20평대(59~84)", "30평대(84이상)"], key="apt_pyeong")
+
+        custom_dates = None
+        if period == "직접 설정":
+            st.write("")
+            date_col1, _ = st.columns([1, 2])
+            with date_col1:
+                custom_dates = st.date_input("조회 시작/종료일 (직접 설정)", [datetime.date.today() - datetime.timedelta(days=30), datetime.date.today()])
 
         st.write("")
         
@@ -527,6 +533,20 @@ else:
                         end_str = end_date.strftime("%Y-%m-%d")
                         real_df = real_df[(real_df['계약일'] >= start_str) & (real_df['계약일'] <= end_str)]
                     
+                    # 🚨 [수술 1 완벽 적용] 메인 화면 평형대 필터링 로직 작동!
+                    if pyeong_type != "전체보기":
+                        def get_area_num(area_str):
+                            try: return float(area_str.replace('㎡', '').strip())
+                            except: return 0.0
+                        
+                        area_series = real_df['전용면적'].apply(get_area_num)
+                        if "10평대" in pyeong_type:
+                            real_df = real_df[area_series < 59.0]
+                        elif "20평대" in pyeong_type:
+                            real_df = real_df[(area_series >= 59.0) & (area_series < 84.0)]
+                        elif "30평대" in pyeong_type:
+                            real_df = real_df[area_series >= 84.0]
+
                     if dong_name not in ["전체 (구 단위)", "전체 (시/도 단위)"]:
                         real_df = real_df[real_df['법정동'].str.contains(dong_name, na=False)]
                     if selected_apt.strip():
