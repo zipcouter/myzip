@@ -24,7 +24,7 @@ with st.sidebar:
     st.write("원하시는 시장을 선택하세요.")
     page = st.radio("조회 메뉴", ["🏢 아파트 실거래가", "🏘️ 비아파트 (오피스텔/빌라 등)"])
     st.write("---")
-    st.caption("v1.8 - NameError Fixed (Recent Months)")
+    st.caption("v1.9 - Cloud Server Connection Fixed (1613000)")
     
     if st.button("🔄 앱 캐시 강제 초기화"):
         st.cache_data.clear()
@@ -80,7 +80,7 @@ def get_lat_lng_free(sido, sigungu, dong, apt_name):
     return None, None
 
 # ---------------------------------------------------------
-# 🌟 유틸리티 함수들 (기간 설정 추가 및 누락 함수 복구)
+# 🌟 유틸리티 함수들 (1.8버전 완벽 유지)
 # ---------------------------------------------------------
 PERIOD_OPTIONS = ["오늘", "이번 달", "최근 3개월", "최근 6개월", "최근 1년", "직접 설정"]
 
@@ -107,7 +107,6 @@ def get_xml_text(item, tags, default=""):
         if node is not None and node.text: return node.text.strip()
     return default
 
-# 🚨 [수술 완료] 실수로 지웠던 1개월~1년 단위 계산 함수 복구!
 def get_recent_months(n):
     today = datetime.date.today()
     months = []
@@ -132,7 +131,7 @@ def get_months_from_dates(start_d, end_d):
     return months
 
 # =====================================================================
-# 🚨 국토부 통신 엔진 (매매/전월세 통합 판단 로직 강화)
+# 🚨 클라우드 전용 최신 API 통신 엔진 (HTTPS + 1613000)
 # =====================================================================
 def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_type):
     if not lawd_cd: return None, "지역 코드를 찾을 수 없습니다."
@@ -141,10 +140,11 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_typ
     is_rent = (api_type == "전월세")
     
     for ymd in target_months:
+        # 🚨 [수술 완료] 클라우드 IP 차단을 막기 위해 최신 HTTPS 통합 서버로 교체
         if is_rent:
-            url = f"http://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptRent?serviceKey={MOLIT_API_KEY}&LAWD_CD={lawd_cd}&DEAL_YMD={ymd}&numOfRows=1000"
+            url = f"https://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent?serviceKey={MOLIT_API_KEY}&LAWD_CD={lawd_cd}&DEAL_YMD={ymd}&numOfRows=1000"
         else:
-            url = f"http://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTradeDev?serviceKey={MOLIT_API_KEY}&LAWD_CD={lawd_cd}&DEAL_YMD={ymd}&numOfRows=1000"
+            url = f"https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey={MOLIT_API_KEY}&LAWD_CD={lawd_cd}&DEAL_YMD={ymd}&numOfRows=1000"
         
         try:
             res = requests.get(url, headers=headers, timeout=15)
@@ -173,8 +173,9 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_typ
                     
                     monthly_val = 0
                     if is_rent:
-                        deposit_str = get_xml_text(item, ['보증금액', 'deposit'], "0").replace(',', '').strip()
-                        monthly_str = get_xml_text(item, ['월세금액', 'monthlyRent'], "0").replace(',', '').strip()
+                        # 🚨 최신 API 태그(deposit, monthlyRent)로 정밀 타격
+                        deposit_str = get_xml_text(item, ['deposit', '보증금액'], "0").replace(',', '').strip()
+                        monthly_str = get_xml_text(item, ['monthlyRent', '월세금액'], "0").replace(',', '').strip()
                         try: price = int(deposit_str)
                         except: price = 0
                         try: monthly_val = int(monthly_str)
@@ -182,7 +183,7 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_typ
                         
                         actual_trade_type = "월세" if monthly_val > 0 else "전세"
                     else:
-                        price_str = get_xml_text(item, ['거래금액', 'dealAmount'], "0").replace(',', '').strip()
+                        price_str = get_xml_text(item, ['dealAmount', '거래금액'], "0").replace(',', '').strip()
                         try: price = int(price_str)
                         except: price = 0
                         actual_trade_type = "매매"
@@ -196,7 +197,7 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_typ
                             "층": f"{floor}층", "건축년도": build_y,
                             "거래유형": actual_trade_type, 
                             "중개거래여부": trade_type_str,
-                            "거래금액(만 원)": price, "월세(만 원)": monthly_val
+                            "거래금액(만 시)": price, "월세(만 원)": monthly_val, "거래금액(만 원)": price # 호환성 유지
                         })
         except Exception as e: return None, str(e) 
             
@@ -245,7 +246,7 @@ def render_clickable_list(df, is_apt=True):
         st.markdown("<hr style='margin: 0px; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
 
 # =====================================================================
-# 🚨 상세페이지 (기간 통일 & 주차/용적률/건폐율 UI 반영)
+# 🚨 상세페이지 (기간 통일 & 주차/용적률/건폐율 UI 반영 유지)
 # =====================================================================
 def show_detail_page():
     apt_name = st.session_state.get("detail_apt_name", "이름없음")
