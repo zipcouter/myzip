@@ -24,7 +24,7 @@ with st.sidebar:
     st.write("원하시는 시장을 선택하세요.")
     page = st.radio("조회 메뉴", ["🏢 아파트 실거래가", "🏘️ 비아파트 (오피스텔/빌라 등)"])
     st.write("---")
-    st.caption("v2.2 - Deep Search XML Parser (No Code Dropped)")
+    st.caption("v2.2 - Hidden Auth Error Detector")
     
     if st.button("🔄 앱 캐시 강제 초기화"):
         st.cache_data.clear()
@@ -80,7 +80,7 @@ def get_lat_lng_free(sido, sigungu, dong, apt_name):
     return None, None
 
 # ---------------------------------------------------------
-# 🌟 유틸리티 함수들 (1.8 ~ 2.1 모든 기능 100% 보존)
+# 🌟 유틸리티 함수들
 # ---------------------------------------------------------
 PERIOD_OPTIONS = ["오늘", "이번 달", "최근 3개월", "최근 6개월", "최근 1년", "직접 설정"]
 
@@ -101,10 +101,9 @@ def format_to_korean_currency(price_manwon):
         result = f"{result} {rem_str}" if result else rem_str
     return result if result else "0원"
 
-# 🚨 [수술 완료] XML 딥서치 엔진: 어떤 계층, 어떤 대소문자로 태그가 들어와도 100% 잡아냅니다.
 def get_xml_text(item, tags, default=""):
     lower_tags = [t.strip().lower() for t in tags]
-    for child in item.iter(): # 자식의 자식 태그까지 모두 뒤짐
+    for child in item.iter(): 
         tag_name = child.tag.split('}')[-1].strip().lower()
         if tag_name in lower_tags:
             if child.text is not None and child.text.strip() != "":
@@ -135,7 +134,7 @@ def get_months_from_dates(start_d, end_d):
     return months
 
 # =====================================================================
-# 🚨 클라우드 전용 최신 API 통신 엔진
+# 🚨 클라우드 전용 최신 API (숨은 권한 에러 탐지기 장착)
 # =====================================================================
 def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_type):
     if not lawd_cd: return None, "지역 코드를 찾을 수 없습니다."
@@ -153,6 +152,16 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_typ
             res = requests.get(url, headers=headers, timeout=20)
             if res.status_code == 200:
                 root = ET.fromstring(res.text)
+                
+                # 🚨 [핵심 수술] 공공데이터포털 미승인 API 키의 숨겨진 에러 탐지!
+                err_msg_tag = root.find('.//errMsg')
+                if err_msg_tag is not None and "SERVICE ERROR" in err_msg_tag.text.upper():
+                    return None, "API 키가 '전월세' 서비스에 가입되지 않았습니다. (공공데이터포털에서 '국토교통부_아파트 전월세 자료' 추가 신청 필수)"
+                
+                return_reason = root.find('.//returnReasonCode')
+                if return_reason is not None and return_reason.text.strip() not in ["00", "0"]:
+                    return None, "API 키가 '전월세' 서비스에 가입되지 않았습니다. (공공데이터포털에서 '국토교통부_아파트 전월세 자료' 추가 신청 필수)"
+                
                 result_code = root.find('.//resultCode')
                 if result_code is not None and result_code.text.strip() not in ["00", "0"]:
                     error_msg = root.find('.//resultMsg').text if root.find('.//resultMsg') is not None else "Unknown"
@@ -208,7 +217,7 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_typ
     else: return pd.DataFrame(), "NODATA"
 
 # =====================================================================
-# 🚨 [버튼 UI 완벽 보존] 흉측한 체크박스 절대 없음!
+# 🚨 단지명 버튼 UI 완벽 유지
 # =====================================================================
 def render_clickable_list(df, is_apt=True):
     col_ratios = [1.2, 2.5, 1.5, 0.8, 1.5, 1.5]
@@ -249,7 +258,7 @@ def render_clickable_list(df, is_apt=True):
         st.markdown("<hr style='margin: 0px; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
 
 # =====================================================================
-# 🚨 상세페이지 (기간 설정 & 주차/용적률 & GAP 차트 완벽 보존)
+# 🚨 상세페이지
 # =====================================================================
 def show_detail_page():
     apt_name = st.session_state.get("detail_apt_name", "이름없음")
@@ -532,7 +541,6 @@ else:
                         end_str = end_date.strftime("%Y-%m-%d")
                         real_df = real_df[(real_df['계약일'] >= start_str) & (real_df['계약일'] <= end_str)]
                     
-                    # 🚨 [보존 완료] 메인 화면 평형대 필터 완벽 보존
                     if pyeong_type != "전체보기":
                         def get_area_num(area_str):
                             try: return float(area_str.replace('㎡', '').strip())
@@ -558,6 +566,7 @@ else:
                     else: st.success(f"✅ 100% 국토교통부 실제 {trade_type} 데이터 연동 완료!")
                 else:
                     st.session_state.res_df = pd.DataFrame()
+                    # 🚨 에러 출력 최적화: 권한 에러가 나면 숨기지 않고 빨간 박스로 정확히 출력합니다.
                     if has_error and msg != "NODATA": st.error(f"⚠️ API 서버 통신 오류: {error_msg}")
                     else: st.info("해당 기간/조건에 신고된 실거래 데이터가 없습니다. (신고기간 30일 고려 요망)")
 
