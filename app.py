@@ -1013,7 +1013,7 @@ elif page == "🏢 아파트 실거래가":
             f"{'' if dong_name in ['전체 (구 단위)', '전체 (시/도 단위)'] else dong_name}"
         ).strip()
         st.session_state.apt_trade_type = trade_type
-        st.session_state.apt_period = period
+        st.session_state.apt_period_val = period
         st.session_state.apt_start_date = start_date
         st.session_state.apt_end_date = end_date
 
