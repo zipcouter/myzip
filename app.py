@@ -27,7 +27,7 @@ with st.sidebar:
     st.write("원하시는 시장을 선택하세요.")
     page = st.radio("조회 메뉴", ["🏢 아파트 실거래가", "🏘️ 비아파트 (오피스텔/빌라 등)"])
     st.write("---")
-    st.caption("v3.2 - Non-Apt Logic Activated (Apt Code Locked)")
+    st.caption("v3.3 - BldRgstHubService Endpoint Fixed")
     
     if st.button("🔄 앱 캐시 강제 초기화"):
         st.cache_data.clear()
@@ -137,7 +137,7 @@ def get_months_from_dates(start_d, end_d):
     return months
 
 # =====================================================================
-# 🚨 건축물대장 듀얼-엔진 (아파트 코드 동결)
+# 🚨 건축물대장 듀얼-엔진 (아파트 코드 동결 + BldRgstHubService 적용)
 # =====================================================================
 @st.cache_data(show_spinner=False)
 def fetch_building_ledger(sigungu_cd, dong_name, jibun):
@@ -162,9 +162,10 @@ def fetch_building_ledger(sigungu_cd, dong_name, jibun):
     bun = parts[0].zfill(4) if len(parts) > 0 else "0000"
     ji = parts[1].zfill(4) if len(parts) > 1 else "0000"
     
+    # 💡 해결 포인트: BldRgstService_v2 -> BldRgstHubService 로 주소 변경 완료
     urls_to_try = [
-        f"https://apis.data.go.kr/1613000/BldRgstService_v2/getBrTitleInfo?serviceKey={MOLIT_API_KEY}&sigunguCd={sigungu_cd}&bjdongCd={bjdong_cd}&platGbCd={plat_gb_cd}&bun={bun}&ji={ji}&numOfRows=10",
-        f"http://apis.data.go.kr/1613000/BldRgstService_v2/getBrTitleInfo?serviceKey={MOLIT_API_KEY}&sigunguCd={sigungu_cd}&bjdongCd={bjdong_cd}&platGbCd={plat_gb_cd}&bun={bun}&ji={ji}&numOfRows=10"
+        f"https://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo?serviceKey={MOLIT_API_KEY}&sigunguCd={sigungu_cd}&bjdongCd={bjdong_cd}&platGbCd={plat_gb_cd}&bun={bun}&ji={ji}&numOfRows=10",
+        f"http://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo?serviceKey={MOLIT_API_KEY}&sigunguCd={sigungu_cd}&bjdongCd={bjdong_cd}&platGbCd={plat_gb_cd}&bun={bun}&ji={ji}&numOfRows=10"
     ]
     
     last_err = "알 수 없는 에러"
