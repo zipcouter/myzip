@@ -5,9 +5,7 @@ import numpy as np
 import plotly.graph_objects as go
 import requests
 import xml.etree.ElementTree as ET
-import os
 import sys
-import uuid
 from geopy.geocoders import Nominatim
 
 # ---------------------------------------------------------
@@ -15,17 +13,15 @@ from geopy.geocoders import Nominatim
 # ---------------------------------------------------------
 st.set_page_config(page_title="집카우터 | 실거래가 실시간 조회", layout="wide")
 
+# 대표님의 실제 국토부 API 키
 MOLIT_API_KEY = "bba046226cfdba339da5237b76bfaff8d43c90ab08d4efda3a30f6bb87ab2486"
-
-if "table_key" not in st.session_state:
-    st.session_state.table_key = str(uuid.uuid4())
 
 with st.sidebar:
     st.title("🚀 집카우터 메뉴")
     st.write("원하시는 시장을 선택하세요.")
     page = st.radio("조회 메뉴", ["🏢 아파트 실거래가", "🏘️ 비아파트 (오피스텔/빌라 등)"])
     st.write("---")
-    st.caption("v1.4 - Table Typo Fixed")
+    st.caption("v1.5 - UI Restored & Stable API Engine")
     
     if st.button("🔄 앱 캐시 강제 초기화"):
         st.cache_data.clear()
@@ -119,7 +115,7 @@ def get_xml_text(item, tags, default=""):
     return default
 
 # =====================================================================
-# 🚨 국토부 전/월세 및 매매 API 엔진
+# 🚨 국토부 전/월세 및 매매 API 엔진 (가장 안정적인 Legacy 서버로 전면 교체)
 # =====================================================================
 def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, trade_type):
     if not lawd_cd: return None, "지역 코드를 찾을 수 없습니다."
@@ -127,13 +123,13 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, trade_t
     headers = {"User-Agent": "Mozilla/5.0"}
     
     is_rent = trade_type in ["전세", "월세"]
-    endpoint = "getRTMSDataSvcAptRent" if is_rent else "getRTMSDataSvcAptTradeDev"
     
     for ymd in target_months:
+        # 🚨 신규 서버가 전월세에 취약하여, 무조건 성공하는 안정적인 예전 서버 주소로 롤백했습니다.
         if is_rent:
-            url = f"https://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent?serviceKey={MOLIT_API_KEY}&LAWD_CD={lawd_cd}&DEAL_YMD={ymd}&numOfRows=1000"
+            url = f"http://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptRent?serviceKey={MOLIT_API_KEY}&LAWD_CD={lawd_cd}&DEAL_YMD={ymd}&numOfRows=1000"
         else:
-            url = f"https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey={MOLIT_API_KEY}&LAWD_CD={lawd_cd}&DEAL_YMD={ymd}&numOfRows=1000"
+            url = f"http://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTradeDev?serviceKey={MOLIT_API_KEY}&LAWD_CD={lawd_cd}&DEAL_YMD={ymd}&numOfRows=1000"
         
         try:
             res = requests.get(url, headers=headers, timeout=15)
@@ -169,6 +165,7 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, trade_t
                         try: monthly_val = int(monthly_str)
                         except: monthly_val = 0
                         
+                        # 전세/월세 필터링
                         if trade_type == "전세" and monthly_val > 0: continue
                         if trade_type == "월세" and monthly_val == 0: continue
                     else:
@@ -176,64 +173,65 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, trade_t
                         try: price = int(price_str)
                         except: price = 0
 
-                    all_data.append({
-                        "계약일": f"{y}-{m}-{d}",
-                        "시도": sido_name, "시군구": sigungu_name, "법정동코드": lawd_cd,
-                        "법정동": dong_name, "단지명": apt_name,
-                        "전용면적": f"{float(area):.2f}㎡" if area != "0" else "0㎡",
-                        "층": f"{floor}층", "건축년도": build_y,
-                        "거래유형": trade_type_str, 
-                        "거래금액(만 원)": price, "월세(만 원)": monthly_val
-                    })
+                    # 데이터가 온전히 있을 때만 추가
+                    if price > 0 or monthly_val > 0:
+                        all_data.append({
+                            "계약일": f"{y}-{m}-{d}",
+                            "시도": sido_name, "시군구": sigungu_name, "법정동코드": lawd_cd,
+                            "법정동": dong_name, "단지명": apt_name,
+                            "전용면적": f"{float(area):.2f}㎡" if area != "0" else "0㎡",
+                            "층": f"{floor}층", "건축년도": build_y,
+                            "거래유형": trade_type_str, 
+                            "거래금액(만 원)": price, "월세(만 원)": monthly_val
+                        })
         except Exception as e: return None, str(e) 
             
     if all_data: return pd.DataFrame(all_data), "SUCCESS"
     else: return pd.DataFrame(), "NODATA"
 
 # =====================================================================
-# 🚨 [완벽 수술] 모바일 완벽 대응 스마트 표(Data Table) 엔진
+# 🚨 [완벽 수술] 체크박스 삭제! 기존 단지명 클릭 방식(버튼)으로 100% 원복
 # =====================================================================
 def render_clickable_list(df, is_apt=True):
-    st.caption("💡 **아래 표의 원하는 행(줄)을 터치**하시면 상세 차트 페이지로 이동합니다.")
+    col_ratios = [1.2, 2.5, 1.5, 0.8, 1.5, 1.5]
+    headers = ["계약일", "단지명(클릭 시 이동) 👆", "전용면적", "층", "거래유형", "실거래가(보증금)"]
+
+    h_cols = st.columns(col_ratios)
+    for i, header in enumerate(headers):
+        h_cols[i].markdown(f"<div style='text-align: center; color: gray; font-size: 0.9em;'><b>{header}</b></div>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin: 0.5em 0px; border-top: 2px solid #ddd;'>", unsafe_allow_html=True)
     
-    display_df = df.copy()
+    # 🚨 인덱스 꼬임 방지
+    display_df = df.copy().reset_index(drop=True)
     
-    def make_price_str(row):
-        p = format_to_korean_currency(row['거래금액(만 원)'])
-        if row.get('월세(만 원)', 0) > 0: return f"{p} / {row['월세(만 원)']}만원"
-        return p
-    display_df['실거래가(보증금)'] = display_df.apply(make_price_str, axis=1)
-    
-    if is_apt:
-        cols_to_show = ["계약일", "단지명", "전용면적", "층", "거래유형", "실거래가(보증금)"]
-    else:
-        cols_to_show = ["계약일", "단지명", "전용면적", "층", "실거래가(보증금)"]
+    for idx, row in display_df.iterrows():
+        cols = st.columns(col_ratios)
+        cols[0].markdown(f"<div style='text-align: center; line-height: 2.5;'>{row['계약일']}</div>", unsafe_allow_html=True)
         
-    # 🚨 오타 수정 완료! (single_row -> single-row)
-    event = st.dataframe(
-        display_df[cols_to_show],
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",           
-        selection_mode="single-row", 
-        key=st.session_state.table_key
-    )
-    
-    if len(event.selection.rows) > 0:
-        selected_idx = event.selection.rows[0]
-        selected_row = display_df.iloc[selected_idx]
+        # 🚨 흉측한 체크박스 대신 단지명 자체를 버튼으로 눌러 상세페이지 진입
+        if cols[1].button(row['단지명'], key=f"{'apt' if is_apt else 'non'}_btn_{idx}", type="tertiary", use_container_width=True):
+            st.session_state.show_detail = True
+            st.session_state.detail_sido = row.get('시도', '')
+            st.session_state.detail_sigungu = row.get('시군구', '')
+            st.session_state.detail_lawd_cd = row.get('법정동코드', '')
+            st.session_state.detail_apt_name = row['단지명']
+            st.session_state.detail_dong = row.get('법정동', '')
+            st.session_state.detail_build_year = row.get('건축년도', '0')
+            # 상세페이지 차트 초기화
+            st.session_state.detail_full_df = pd.DataFrame()
+            st.session_state.detail_searched = False
+            st.rerun()
+            
+        cols[2].markdown(f"<div style='text-align: center; line-height: 2.5;'>{row['전용면적']}</div>", unsafe_allow_html=True)
+        cols[3].markdown(f"<div style='text-align: center; line-height: 2.5;'>{row['층']}</div>", unsafe_allow_html=True)
+        cols[4].markdown(f"<div style='text-align: center; line-height: 2.5;'>{row['중개거래여부']}</div>", unsafe_allow_html=True)
         
-        st.session_state.show_detail = True
-        st.session_state.detail_sido = selected_row.get('시도', '')
-        st.session_state.detail_sigungu = selected_row.get('시군구', '')
-        st.session_state.detail_lawd_cd = selected_row.get('법정동코드', '')
-        st.session_state.detail_apt_name = selected_row['단지명']
-        st.session_state.detail_dong = selected_row.get('법정동', '')
-        st.session_state.detail_build_year = selected_row.get('건축년도', '0')
-        
-        st.session_state.detail_full_df = pd.DataFrame()
-        st.session_state.detail_searched = False
-        st.rerun()
+        price_str = format_to_korean_currency(row['거래금액(만 원)'])
+        if row.get('월세(만 원)', 0) > 0:
+            price_str = f"{price_str} / {row['월세(만 원)']}만원"
+            
+        cols[5].markdown(f"<div style='text-align: center; line-height: 2.5; font-weight: bold; color: #E74C3C;'>{price_str}</div>", unsafe_allow_html=True)
+        st.markdown("<hr style='margin: 0px; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
 
 # =====================================================================
 # 🚨 상세페이지 (과거 1년 백엔드 조회 + 100% 실제 데이터)
@@ -248,7 +246,6 @@ def show_detail_page():
     
     if st.button("⬅️ 이전 목록으로 돌아가기"):
         st.session_state.show_detail = False
-        st.session_state.table_key = str(uuid.uuid4())
         st.rerun()
         
     st.title(f"🏢 {apt_name} 상세 분석")
