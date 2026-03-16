@@ -10,7 +10,6 @@ import uuid
 import urllib3
 from geopy.geocoders import Nominatim
 
-# SSL 경고창 숨기기
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ---------------------------------------------------------
@@ -28,7 +27,7 @@ with st.sidebar:
     st.write("원하시는 시장을 선택하세요.")
     page = st.radio("조회 메뉴", ["🏢 아파트 실거래가", "🏘️ 비아파트 (오피스텔/빌라 등)"])
     st.write("---")
-    st.caption("v2.5 - SSL Bypass & Hard Error Exposer")
+    st.caption("v2.7 - Building Ledger (Parking/Ratio) API Integrated")
     
     if st.button("🔄 앱 캐시 강제 초기화"):
         st.cache_data.clear()
@@ -138,7 +137,70 @@ def get_months_from_dates(start_d, end_d):
     return months
 
 # =====================================================================
-# 🚨 클라우드 전용 API (SSL 검증 무시 및 에러 추적기 장착)
+# 🚨 [신규 수술] 건축물대장 표제부 연동 엔진 (주차, 용적률, 건폐율)
+# =====================================================================
+@st.cache_data(show_spinner=False)
+def fetch_building_ledger(sigungu_cd, dong_name, jibun):
+    if not jibun: return None, None, None
+    
+    # 1. 정확한 법정동 5자리 코드 추출 (시군구코드 뒤에 붙는 5자리)
+    bjdong_cd = ""
+    try:
+        res = requests.get(f"https://grpc-proxy-server-mkvo6j4wsq-du.a.run.app/v1/regcodes?regcode_pattern={sigungu_cd}*&is_ignore_zero=true", timeout=5, verify=False).json()
+        for item in res.get('regcodes', []):
+            if dong_name in item['name']:
+                bjdong_cd = item['code'][5:10]
+                break
+    except: pass
+    
+    if not bjdong_cd: return None, None, None
+    
+    # 2. 지번 파싱 (본번-부번 분리 및 대지구분코드 판별)
+    plat_gb_cd = "0" # 0: 대지, 1: 산
+    clean_jibun = str(jibun).replace('산', '').strip()
+    if '산' in str(jibun): plat_gb_cd = "1"
+    
+    parts = clean_jibun.split('-')
+    bun = parts[0].zfill(4) if len(parts) > 0 else "0000"
+    ji = parts[1].zfill(4) if len(parts) > 1 else "0000"
+    
+    # 3. 방금 신청하신 건축물대장 API 호출!
+    url = f"https://apis.data.go.kr/1613000/BldRgstService_v2/getBrTitleInfo?serviceKey={MOLIT_API_KEY}&sigunguCd={sigungu_cd}&bjdongCd={bjdong_cd}&platGbCd={plat_gb_cd}&bun={bun}&ji={ji}&numOfRows=10"
+    
+    try:
+        res = requests.get(url, timeout=10, verify=False)
+        if res.status_code == 200:
+            root = ET.fromstring(res.text)
+            items = root.findall('.//item')
+            if items:
+                tot_pkng = 0
+                vl_rat = 0.0
+                bc_rat = 0.0
+                
+                # 아파트 단지는 여러 동이 있을 수 있으므로 합산/최대값 추출
+                for item in items:
+                    main_atch_gb_cd = get_xml_text(item, ['mainAtchGbCd'], "")
+                    if main_atch_gb_cd in ["0", "1", ""]: 
+                        try: tot_pkng += int(get_xml_text(item, ['totPkngCnt'], "0"))
+                        except: pass
+                        try: 
+                            vl_rat = max(vl_rat, float(get_xml_text(item, ['vlRat'], "0")))
+                            bc_rat = max(bc_rat, float(get_xml_text(item, ['bcRat'], "0")))
+                        except: pass
+                
+                # 만약 합산이 안됐으면 첫번째 값이라도 강제로 추출
+                if tot_pkng == 0 and vl_rat == 0.0:
+                    tot_pkng = get_xml_text(items[0], ['totPkngCnt'], "0")
+                    vl_rat = get_xml_text(items[0], ['vlRat'], "0")
+                    bc_rat = get_xml_text(items[0], ['bcRat'], "0")
+                    
+                return tot_pkng, f"{float(vl_rat)}%", f"{float(bc_rat)}%"
+    except: pass
+    
+    return None, None, None
+
+# =====================================================================
+# 🚨 클라우드 전용 최신 API (지번 데이터 몰래 추출기 추가)
 # =====================================================================
 def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_type):
     if not lawd_cd: return None, "지역 코드를 찾을 수 없습니다."
@@ -163,7 +225,6 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_typ
         for url in urls_to_try:
             if success_for_month: break
             try:
-                # 🚨 SSL 에러 무시 (verify=False)
                 res = requests.get(url, headers=headers, timeout=15, verify=False)
                 if res.status_code == 200:
                     root = ET.fromstring(res.text)
@@ -189,6 +250,10 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_typ
                     for item in item_list:
                         apt_name = get_xml_text(item, ['aptNm', '아파트', '단지', '단지명'], "이름없음")
                         dong_name = get_xml_text(item, ['umdNm', '법정동', '법정동명', 'dong'], "")
+                        
+                        # 🚨 건축물대장 조회를 위해 '지번' 몰래 추출
+                        jibun = get_xml_text(item, ['jibun', '지번'], "")
+                        
                         area = get_xml_text(item, ['excluUseAr', 'exclUseAr', '전용면적'], "0")
                         floor = get_xml_text(item, ['floor', '층'], "0")
                         y = get_xml_text(item, ['dealYear', '년'], "2026")
@@ -222,7 +287,8 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_typ
                         all_data.append({
                             "계약일": f"{y}-{m}-{d}",
                             "시도": sido_name, "시군구": sigungu_name, "법정동코드": lawd_cd,
-                            "법정동": dong_name, "단지명": apt_name,
+                            "법정동": dong_name, "지번": jibun, # 🚨 지번 저장
+                            "단지명": apt_name,
                             "전용면적": f"{float(area):.2f}㎡" if area != "0" else "0㎡",
                             "층": f"{floor}층", "건축년도": build_y,
                             "거래유형": actual_trade_type, 
@@ -230,7 +296,6 @@ def fetch_real_apt_data(sido_name, sigungu_name, lawd_cd, target_months, api_typ
                             "거래금액(만 원)": price, "월세(만 원)": monthly_val
                         })
             except Exception as e:
-                # 🚨 에러 원인을 그대로 노출하여 범인 색출
                 last_error_msg = f"연결 거부됨: {str(e)[:100]}"
                 
     if all_data: return pd.DataFrame(all_data), "SUCCESS"
@@ -263,6 +328,8 @@ def render_clickable_list(df, is_apt=True):
             st.session_state.detail_apt_name = row['단지명']
             st.session_state.detail_dong = row.get('법정동', '')
             st.session_state.detail_build_year = row.get('건축년도', '0')
+            st.session_state.detail_jibun = row.get('지번', '') # 🚨 지번 데이터를 세션에 넘김
+            
             st.session_state.detail_full_df = pd.DataFrame()
             st.session_state.detail_searched = False
             st.rerun()
@@ -279,7 +346,7 @@ def render_clickable_list(df, is_apt=True):
         st.markdown("<hr style='margin: 0px; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
 
 # =====================================================================
-# 🚨 상세페이지 (기간 통일 & 주차/용적률/건폐율 UI & GAP 차트 유지)
+# 🚨 상세페이지 (건축물대장 통신 및 차트 억 단위/한글화 완벽 적용)
 # =====================================================================
 def show_detail_page():
     apt_name = st.session_state.get("detail_apt_name", "이름없음")
@@ -288,6 +355,7 @@ def show_detail_page():
     sido = st.session_state.get("detail_sido", "")
     sigungu = st.session_state.get("detail_sigungu", "")
     lawd_cd = st.session_state.get("detail_lawd_cd", "")
+    jibun = st.session_state.get("detail_jibun", "")
     
     if st.button("⬅️ 이전 목록으로 돌아가기"):
         st.session_state.show_detail = False
@@ -304,10 +372,19 @@ def show_detail_page():
     col_info, col_map = st.columns([1, 1])
     with col_info:
         st.subheader("📌 단지 기본 정보")
-        st.write(f"**📍 법정동 주소:** {sido} {sigungu} {dong_name}")
+        st.write(f"**📍 법정동 주소:** {sido} {sigungu} {dong_name} {jibun}")
         st.write(f"**📅 준공일:** {build_str}")
-        st.write(f"**🚗 주차대수:** 건축물대장 연동 대기중")
-        st.write(f"**🏢 용적률 / 🏗️ 건폐율:** 건축물대장 연동 대기중")
+        
+        # 🚨 건축물대장 API 실시간 호출
+        with st.spinner("📡 건축물대장 스펙 조회 중..."):
+            pkng, vl, bc = fetch_building_ledger(lawd_cd, dong_name, jibun)
+        
+        if pkng is not None:
+            st.write(f"**🚗 총 주차대수:** {pkng}대")
+            st.write(f"**🏢 용적률 / 🏗️ 건폐율:** {vl} / {bc}")
+        else:
+            st.write(f"**🚗 주차대수:** 건축물대장 정보 조회 실패 (공공데이터포털 동기화 대기중)")
+            st.write(f"**🏢 용적률 / 🏗️ 건폐율:** 건축물대장 정보 조회 실패")
         
     with col_map:
         lat, lng = get_lat_lng_free(sido, sigungu, dong_name, apt_name)
@@ -389,35 +466,43 @@ def show_detail_page():
 
             fig = go.Figure()
             df_for_chart = detail_full_df.copy()
+            
+            # 🚨 한글 날짜 형식 변환
+            df_for_chart['계약월_한글'] = df_for_chart['계약일'].str[:4] + "년 " + df_for_chart['계약일'].str[5:7] + "월"
             df_for_chart['계약월'] = df_for_chart['계약일'].str[:7]
 
             sale_agg = pd.DataFrame()
             rent_agg = pd.DataFrame()
 
+            # 🚨 만원을 '억 원' 단위로 변환
             if current_view_type in ["매매", "매매+전세 통합"]:
                 df_sale_c = df_for_chart[df_for_chart['거래유형'] == '매매']
-                if not df_sale_c.empty: sale_agg = df_sale_c.groupby('계약월')['거래금액(만 원)'].mean().reset_index()
+                if not df_sale_c.empty: 
+                    sale_agg = df_sale_c.groupby(['계약월', '계약월_한글'])['거래금액(만 원)'].mean().reset_index()
+                    sale_agg['거래금액(억 원)'] = sale_agg['거래금액(만 원)'] / 10000
 
             if current_view_type in ["전세", "매매+전세 통합"]:
                 df_rent_c = df_for_chart[df_for_chart['거래유형'] == '전세']
-                if not df_rent_c.empty: rent_agg = df_rent_c.groupby('계약월')['거래금액(만 원)'].mean().reset_index()
+                if not df_rent_c.empty: 
+                    rent_agg = df_rent_c.groupby(['계약월', '계약월_한글'])['거래금액(만 원)'].mean().reset_index()
+                    rent_agg['거래금액(억 원)'] = rent_agg['거래금액(만 원)'] / 10000
 
             if current_view_type == "매매+전세 통합" and not sale_agg.empty and not rent_agg.empty:
-                merged = pd.merge(sale_agg, rent_agg, on='계약월', how='outer', suffixes=('_매매', '_전세')).sort_values('계약월')
-                merged['거래금액(만 원)_매매'] = merged['거래금액(만 원)_매매'].interpolate(method='linear').ffill().bfill()
-                merged['거래금액(만 원)_전세'] = merged['거래금액(만 원)_전세'].interpolate(method='linear').ffill().bfill()
-                merged['GAP'] = merged['거래금액(만 원)_매매'] - merged['거래금액(만 원)_전세']
+                merged = pd.merge(sale_agg, rent_agg, on=['계약월', '계약월_한글'], how='outer', suffixes=('_매매', '_전세')).sort_values('계약월')
+                merged['거래금액(억 원)_매매'] = merged['거래금액(억 원)_매매'].interpolate(method='linear').ffill().bfill()
+                merged['거래금액(억 원)_전세'] = merged['거래금액(억 원)_전세'].interpolate(method='linear').ffill().bfill()
+                merged['GAP(억 원)'] = merged['거래금액(억 원)_매매'] - merged['거래금액(억 원)_전세']
 
-                hover_template_sale = "계약월: %{x}<br>평균 매매가: %{y:,.0f} 만원<br><b><span style='color:#FF4B4B'>🔥 GAP: %{customdata:,.0f} 만원</span></b><extra></extra>"
-                fig.add_trace(go.Scatter(x=merged['계약월'].tolist(), y=merged['거래금액(만 원)_매매'].tolist(), mode='lines+markers', name='평균 매매가', line=dict(color='#FF4B4B', width=2), customdata=merged['GAP'].tolist(), hovertemplate=hover_template_sale))
-                fig.add_trace(go.Scatter(x=merged['계약월'].tolist(), y=merged['거래금액(만 원)_전세'].tolist(), mode='lines+markers', name='평균 전세가', line=dict(color='#1f77b4', width=2), hovertemplate="계약월: %{x}<br>평균 전세가: %{y:,.0f} 만원<extra></extra>"))
+                hover_template_sale = "계약일: %{x}<br>평균 매매가: %{y:,.2f} 억원<br><b><span style='color:#FF4B4B'>🔥 GAP: %{customdata:,.2f} 억원</span></b><extra></extra>"
+                fig.add_trace(go.Scatter(x=merged['계약월_한글'].tolist(), y=merged['거래금액(억 원)_매매'].tolist(), mode='lines+markers', name='평균 매매가', line=dict(color='#FF4B4B', width=2), customdata=merged['GAP(억 원)'].tolist(), hovertemplate=hover_template_sale))
+                fig.add_trace(go.Scatter(x=merged['계약월_한글'].tolist(), y=merged['거래금액(억 원)_전세'].tolist(), mode='lines+markers', name='평균 전세가', line=dict(color='#1f77b4', width=2), hovertemplate="계약일: %{x}<br>평균 전세가: %{y:,.2f} 억원<extra></extra>"))
             else:
                 if not sale_agg.empty:
-                    fig.add_trace(go.Scatter(x=sale_agg['계약월'].tolist(), y=sale_agg['거래금액(만 원)'].tolist(), mode='lines+markers', name='평균 매매가', line=dict(color='#FF4B4B', width=2), hovertemplate="계약월: %{x}<br>매매가: %{y:,.0f} 만원<extra></extra>"))
+                    fig.add_trace(go.Scatter(x=sale_agg['계약월_한글'].tolist(), y=sale_agg['거래금액(억 원)'].tolist(), mode='lines+markers', name='평균 매매가', line=dict(color='#FF4B4B', width=2), hovertemplate="계약일: %{x}<br>매매가: %{y:,.2f} 억원<extra></extra>"))
                 if not rent_agg.empty:
-                    fig.add_trace(go.Scatter(x=rent_agg['계약월'].tolist(), y=rent_agg['거래금액(만 원)'].tolist(), mode='lines+markers', name='평균 전세가', line=dict(color='#1f77b4', width=2), hovertemplate="계약월: %{x}<br>전세가: %{y:,.0f} 만원<extra></extra>"))
+                    fig.add_trace(go.Scatter(x=rent_agg['계약월_한글'].tolist(), y=rent_agg['거래금액(억 원)'].tolist(), mode='lines+markers', name='평균 전세가', line=dict(color='#1f77b4', width=2), hovertemplate="계약일: %{x}<br>전세가: %{y:,.2f} 억원<extra></extra>"))
 
-            fig.update_layout(margin=dict(l=0, r=0, t=20, b=0), xaxis_title="계약월", yaxis_title="평균 금액 (만원)", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), hovermode="x unified")
+            fig.update_layout(margin=dict(l=0, r=0, t=20, b=0), xaxis_title="계약 기간", yaxis_title="평균 금액 (억원)", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), hovermode="x unified")
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
             st.write("---")
@@ -587,7 +672,6 @@ else:
                     else: st.success(f"✅ 100% 국토교통부 실제 {trade_type} 데이터 연동 완료!")
                 else:
                     st.session_state.res_df = pd.DataFrame()
-                    # 🚨 에러 출력 최적화: 권한 에러가 나면 숨기지 않고 빨간 박스로 정확히 출력합니다.
                     if has_error and msg != "NODATA": st.error(f"⚠️ 삐빅! {msg}")
                     else: st.info("해당 기간/조건에 신고된 실거래 데이터가 없습니다.")
 
