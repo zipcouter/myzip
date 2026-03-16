@@ -18,15 +18,12 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # ---------------------------------------------------------
 st.set_page_config(page_title="집카우터 | 실거래가 실시간 조회", layout="wide")
 
-# ✅ FIX 1: API 키 하드코딩 제거 → st.secrets 우선, 환경변수 fallback
+# API 키: st.secrets → 환경변수 → 하드코딩 순서로 fallback
+_HARDCODED_KEY = "bba046226cfdba339da5237b76bfaff8d43c90ab08d4efda3a30f6bb87ab2486"
 try:
     MOLIT_API_KEY = st.secrets["MOLIT_API_KEY"]
 except Exception:
-    MOLIT_API_KEY = os.environ.get("MOLIT_API_KEY", "")
-
-if not MOLIT_API_KEY:
-    st.error("⚠️ MOLIT_API_KEY가 설정되지 않았습니다. Streamlit Secrets 또는 환경변수를 확인하세요.")
-    st.stop()
+    MOLIT_API_KEY = os.environ.get("MOLIT_API_KEY", _HARDCODED_KEY)
 
 ITEMS_PER_PAGE = 50  # 페이지당 표시 건수
 
