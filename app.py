@@ -35,11 +35,7 @@ with st.sidebar:
     st.write("원하시는 시장을 선택하세요.")
     page = st.radio("조회 메뉴", ["🏢 아파트 실거래가", "🏘️ 비아파트 (오피스텔/빌라 등)"])
     st.write("---")
-    st.caption("v3.4 - 전면 안정화 버전")
-
-    if st.button("🔄 앱 캐시 강제 초기화"):
-        st.cache_data.clear()
-        st.rerun()
+    st.caption("v3.5 - 안정화 배포버전")
 
 
 # ---------------------------------------------------------
@@ -243,193 +239,162 @@ def apply_area_filter(df, pyeong_type, is_apt=True):
 
 
 # ---------------------------------------------------------
-# 🏗️ 건축물대장 듀얼-엔진
+# 🏗️ 건축물대장 — 완전 재작성 v4
 # ---------------------------------------------------------
-# ✅ FIX 4: ttl 추가로 캐시 충돌 방지
 @st.cache_data(show_spinner=False, ttl=3600)
-def fetch_building_ledger(sigungu_cd, dong_name, jibun):
+def fetch_building_ledger_v4(sigungu_cd, dong_name, jibun):
     """
-    건축물대장 조회.
-    반환: (tot_pkng, tot_hh, vl_rat_str, bc_rat_str, debug_msg)
-    debug_msg: "SUCCESS" 또는 에러/디버그 문자열 (raw XML 포함)
+    건축물대장 총괄표제부 조회 (v4 완전 재작성)
+    반환: (주차대수, 세대수, 용적률_str, 건폐율_str, 디버그_msg)
     """
-    if not jibun:
-        return None, None, None, None, "실거래가 데이터에 지번 정보가 누락됨"
+    # ── STEP 1. 입력값 검증 ────────────────────────────────────────
+    if not jibun or str(jibun).strip() == "":
+        return None, None, None, None, "지번 정보 없음"
 
-    # ── 법정동 코드 조회 ──────────────────────────────────────────
+    # ── STEP 2. 법정동 5자리 코드 획득 ────────────────────────────
     bjdong_cd = ""
     try:
-        res = requests.get(
-            f"https://grpc-proxy-server-mkvo6j4wsq-du.a.run.app/v1/regcodes"
-            f"?regcode_pattern={sigungu_cd}*&is_ignore_zero=true",
-            timeout=5, verify=False
-        ).json()
-        for item in res.get("regcodes", []):
-            if dong_name in item["name"]:
-                bjdong_cd = item["code"][5:10]
+        r = requests.get(
+            "https://grpc-proxy-server-mkvo6j4wsq-du.a.run.app/v1/regcodes",
+            params={"regcode_pattern": f"{sigungu_cd}*", "is_ignore_zero": "true"},
+            timeout=6, verify=False
+        )
+        for row in r.json().get("regcodes", []):
+            if dong_name in row["name"]:
+                bjdong_cd = row["code"][5:10]
                 break
-    except Exception:
-        return None, None, None, None, "법정동코드 변환 서버 통신 오류"
+    except Exception as e:
+        return None, None, None, None, f"법정동코드 API 오류: {e}"
 
     if not bjdong_cd:
-        return None, None, None, None, f"'{dong_name}'의 5자리 법정동코드 변환 실패"
+        return None, None, None, None, f"법정동코드 변환 실패 (dong={dong_name}, sigungu={sigungu_cd})"
 
-    plat_gb_cd = "0"
-    clean_jibun = str(jibun).replace("산", "").strip()
-    if "산" in str(jibun):
-        plat_gb_cd = "1"
+    # ── STEP 3. 지번 파싱 ─────────────────────────────────────────
+    jibun_str   = str(jibun).strip()
+    plat_gb_cd  = "1" if "산" in jibun_str else "0"
+    clean       = jibun_str.replace("산", "").strip()
+    parts       = clean.split("-")
+    bun         = parts[0].strip().zfill(4)
+    ji          = parts[1].strip().zfill(4) if len(parts) > 1 else "0000"
 
-    parts = clean_jibun.split("-")
-    bun = parts[0].strip().zfill(4) if parts else "0000"
-    ji = parts[1].strip().zfill(4) if len(parts) > 1 else "0000"
-
-    # 총괄표제부(getBrRecapTitleInfo): 세대수·주차·용적률·건폐율 포함
-    # 표제부(getBrTitleInfo): 건물명 등 기본정보만 포함 → 사용 안 함
-    urls_to_try = [
-        f"https://apis.data.go.kr/1613000/BldRgstHubService/getBrRecapTitleInfo"
-        f"?serviceKey={MOLIT_API_KEY}&sigunguCd={sigungu_cd}&bjdongCd={bjdong_cd}"
-        f"&platGbCd={plat_gb_cd}&bun={bun}&ji={ji}&numOfRows=10",
-        f"http://apis.data.go.kr/1613000/BldRgstHubService/getBrRecapTitleInfo"
-        f"?serviceKey={MOLIT_API_KEY}&sigunguCd={sigungu_cd}&bjdongCd={bjdong_cd}"
-        f"&platGbCd={plat_gb_cd}&bun={bun}&ji={ji}&numOfRows=10",
+    # ── STEP 4. API 호출 (https → http fallback) ──────────────────
+    base_params = (
+        f"serviceKey={MOLIT_API_KEY}"
+        f"&sigunguCd={sigungu_cd}&bjdongCd={bjdong_cd}"
+        f"&platGbCd={plat_gb_cd}&bun={bun}&ji={ji}"
+        f"&numOfRows=10&_type=xml"
+    )
+    urls = [
+        f"https://apis.data.go.kr/1613000/BldRgstHubService/getBrRecapTitleInfo?{base_params}",
+        f"http://apis.data.go.kr/1613000/BldRgstHubService/getBrRecapTitleInfo?{base_params}",
     ]
 
-    last_err = "알 수 없는 에러"
-    raw_xml_debug = ""
-
-    for url in urls_to_try:
+    raw_xml = ""
+    for url in urls:
         try:
-            res = requests.get(url, timeout=10, verify=False)
-            raw_xml_debug = res.text[:3000]  # 디버그용 앞 3000자 보관
-
-            if res.status_code != 200:
-                last_err = f"서버 거절 (HTTP {res.status_code})"
+            resp = requests.get(url, timeout=12, verify=False)
+            raw_xml = resp.text
+            if resp.status_code != 200:
                 continue
 
-            root = ET.fromstring(res.text)
+            # ── STEP 5. XML 파싱 ──────────────────────────────────
+            root = ET.fromstring(raw_xml)
 
-            err_reason = root.find(".//returnReasonCode")
-            if err_reason is not None and err_reason.text and err_reason.text.strip() != "00":
-                last_err = f"API 키 미승인 ({err_reason.text.strip()})\n\n{raw_xml_debug}"
-                continue
+            # API 오류 코드 체크
+            rc = root.findtext(".//resultCode") or root.findtext(".//returnReasonCode") or "00"
+            if rc.strip() not in ("00", "0", ""):
+                rm = root.findtext(".//resultMsg") or root.findtext(".//returnReasonMsg") or rc
+                continue  # 다음 URL 시도
 
-            err_msg_el = root.find(".//errMsg")
-            if err_msg_el is not None and err_msg_el.text and "SERVICE ERROR" in err_msg_el.text.upper():
-                last_err = f"API 키 미승인 (SERVICE ERROR)\n\n{raw_xml_debug}"
-                continue
+            # ── STEP 6. item 추출 → 소문자 태그 dict ─────────────
+            xml_items = root.findall(".//item")
+            if not xml_items:
+                return None, None, None, None, (
+                    f"데이터 없음 (sigungu={sigungu_cd}, bjdong={bjdong_cd}, "
+                    f"platGb={plat_gb_cd}, bun={bun}, ji={ji})\n\n{raw_xml[:1000]}"
+                )
 
-            result_code = root.find(".//resultCode")
-            if result_code is not None and result_code.text and result_code.text.strip() not in ["00", "0"]:
-                result_msg_el = root.find(".//resultMsg")
-                last_err = f"국토부 응답 에러: {result_msg_el.text if result_msg_el is not None else '알 수 없음'}\n\n{raw_xml_debug}"
-                continue
+            # 첫 번째 item 기준으로 소문자 dict 구성
+            tag_dict = {}
+            for child in xml_items[0].iter():
+                k = child.tag.split("}")[-1].strip().lower()
+                v = (child.text or "").strip()
+                tag_dict[k] = v   # 빈 값 포함 모두 저장
 
-            items = root.findall(".//item")
-            if not items:
-                last_err = f"대장 데이터 없음 (bjdong:{bjdong_cd} bun:{bun} ji:{ji})\n\n{raw_xml_debug}"
-                return None, None, None, None, last_err
+            def g(key):
+                """태그값 조회, 없으면 '0'"""
+                return tag_dict.get(key.lower(), "0") or "0"
 
-            # ── 전체 태그 수집 (디버그용 — 잘리지 않게 전부 저장) ───────
-            found_tags = {}
-            for child in items[0].iter():
-                tag = child.tag.split("}")[-1].strip()
-                val = (child.text or "").strip()
-                if val:
-                    found_tags[tag] = val
+            def gf(key):
+                """float 변환, 실패시 0.0"""
+                try: return float(g(key))
+                except: return 0.0
 
-            # ── 국토부 BrRecapTitleInfo 공식 태그명만 사용 ──────────────
-            # 참고: https://www.data.go.kr 건축물대장 총괄표제부 정의서
-            #   hhCnt      : 세대수
-            #   totPkngCnt : 옥외+옥내+기계식 합산 주차수
-            #   vlRat      : 용적률
-            #   bcRat      : 건폐율
-            tot_pkng = 0
-            tot_hh   = 0
-            vl_rat   = 0.0
-            bc_rat   = 0.0
+            def gi(key):
+                """int 변환, 실패시 0"""
+                try: return int(float(g(key)))
+                except: return 0
 
-            # ── 모든 태그를 소문자 dict로 수집 ─────────────────────────
-            all_tags = {}
-            for it in items:
-                for child in it.iter():
-                    tag_l = child.tag.split("}")[-1].strip().lower()
-                    val   = (child.text or "").strip()
-                    if val and tag_l not in all_tags:   # 첫 번째 item 우선
-                        all_tags[tag_l] = val
-
-            def tv(key, default="0"):
-                return all_tags.get(key.lower(), default)
-
-            # ── 세대수: hhldCnt(집합) > hoCnt(일반) > hhCnt ─────────────
+            # ── STEP 7. 세대수 ────────────────────────────────────
+            # hhldCnt: 세대수 (집합건물 총괄표제부 핵심 필드)
+            # hoCnt  : 호수   (일반건축물)
+            # hhCnt  : 구버전 호환
             tot_hh = 0
-            for k in ["hhldcnt", "hocnt", "hhcnt"]:
-                v = all_tags.get(k, "")
-                if v:
-                    try:
-                        n = int(float(v))
-                        if n > 0:
-                            tot_hh = n
-                            break
-                    except:
-                        pass
+            for hk in ["hhldcnt", "hocnt", "hhcnt"]:
+                n = gi(hk)
+                if n > 0:
+                    tot_hh = n
+                    break
 
-            # ── 주차: totPkngCnt 우선, 없으면 세부 합산 ─────────────────
-            tot_pkng = 0
-            v = all_tags.get("totpkngcnt", "")
-            if v:
-                try: tot_pkng = int(float(v))
-                except: pass
+            # ── STEP 8. 주차대수 ──────────────────────────────────
+            tot_pkng = gi("totpkngcnt")
             if tot_pkng == 0:
+                # 세부 항목 합산
                 for pk in ["oudrmechutcnt", "indrmechutcnt", "oudrautoutcnt", "indrautoutcnt"]:
-                    try: tot_pkng += int(float(all_tags.get(pk, "0")))
-                    except: pass
+                    tot_pkng += gi(pk)
 
-            # ── 용적률 / 건폐율 ──────────────────────────────────────────
-            vl_rat = 0.0
-            bc_rat = 0.0
+            # ── STEP 9. 용적률 / 건폐율 ──────────────────────────
+            vl_rat = gf("vlrat")
+            bc_rat = gf("bcrat")
 
-            try: vl_rat = float(tv("vlrat")); vl_rat = vl_rat if vl_rat > 0 else 0.0
-            except: pass
-            try: bc_rat = float(tv("bcrat")); bc_rat = bc_rat if bc_rat > 0 else 0.0
-            except: pass
+            # API가 0으로 내려보낼 때 면적값으로 직접 계산
+            plat_area = gf("platarea")
+            vl_estm   = gf("vlratestmtotarea")
+            arch_area = gf("archarea")
 
-            # vlRat=0이면 vlRatEstmTotArea / platArea 로 계산
-            if vl_rat == 0.0:
-                try:
-                    plat = float(tv("platarea"))
-                    estm = float(tv("vlratestmtotarea"))
-                    if plat > 0 and estm > 0:
-                        vl_rat = round(estm / plat * 100, 2)
-                except: pass
+            if vl_rat <= 0 and plat_area > 0 and vl_estm > 0:
+                vl_rat = round(vl_estm / plat_area * 100, 2)
 
-            # bcRat=0이면 archArea / platArea 로 계산
-            if bc_rat == 0.0:
-                try:
-                    plat = float(tv("platarea"))
-                    arch = float(tv("archarea"))
-                    if plat > 0 and arch > 0:
-                        bc_rat = round(arch / plat * 100, 2)
-                except: pass
+            if bc_rat <= 0 and plat_area > 0 and arch_area > 0:
+                bc_rat = round(arch_area / plat_area * 100, 2)
 
             vl_str = f"{vl_rat}%" if vl_rat > 0 else "정보없음"
             bc_str = f"{bc_rat}%" if bc_rat > 0 else "정보없음"
 
-            # ── 디버그 ───────────────────────────────────────────────────
-            tag_lines = "\n".join([f"  {k} = {v}" for k, v in sorted(all_tags.items())])
+            # ── STEP 10. 디버그 메시지 ────────────────────────────
+            all_tag_lines = "\n".join(
+                f"  {k} = {v}" for k, v in tag_dict.items()
+            )
             debug_msg = (
-                f"[파싱 결과] 세대수={tot_hh}, 주차={tot_pkng}, "
-                f"용적률={vl_str}, 건폐율={bc_str}\n"
-                f"platArea={tv('platarea')}, archArea={tv('archarea')}, "
-                f"vlRatEstmTotArea={tv('vlratestmtotarea')}\n\n"
-                f"[전체 태그]\n{tag_lines}"
+                f"[v4 파싱 결과]\n"
+                f"  세대수    : {tot_hh}  (hhldCnt={g('hhldcnt')}, hoCnt={g('hocnt')})\n"
+                f"  주차대수  : {tot_pkng}  (totPkngCnt={g('totpkngcnt')})\n"
+                f"  용적률    : {vl_str}  (vlRat={g('vlrat')}, estm={vl_estm}, plat={plat_area})\n"
+                f"  건폐율    : {bc_str}  (bcRat={g('bcrat')}, arch={arch_area})\n\n"
+                f"[item[0] 전체 태그]\n{all_tag_lines}"
             )
 
             return tot_pkng, tot_hh, vl_str, bc_str, debug_msg
 
+        except ET.ParseError as e:
+            return None, None, None, None, f"XML 파싱 오류: {e}\n\n{raw_xml[:500]}"
         except Exception as e:
-            last_err = f"통신 에러: {str(e)[:80]}\n\n{raw_xml_debug}"
+            continue  # 다음 URL 시도
 
-    return None, None, None, None, last_err
+    return None, None, None, None, (
+        f"API 호출 실패 (sigungu={sigungu_cd}, bjdong={bjdong_cd}, bun={bun}, ji={ji})\n\n"
+        f"{raw_xml[:800]}"
+    )
 
 
 # ---------------------------------------------------------
@@ -739,7 +704,7 @@ def show_detail_page():
         st.write(f"**📅 준공일:** {build_str}")
 
         with st.spinner("📡 건축물대장 스펙 조회 중..."):
-            pkng, hh_cnt, vl, bc, debug_msg = fetch_building_ledger(lawd_cd, dong_name, jibun)
+            pkng, hh_cnt, vl, bc, debug_msg = fetch_building_ledger_v4(lawd_cd, dong_name, jibun)
 
         if pkng is not None:
             st.write(f"**🏘️ 세대수:** {hh_cnt}세대")
