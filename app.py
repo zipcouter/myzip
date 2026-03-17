@@ -636,11 +636,9 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
     total = len(df)
     total_pages = max(1, (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
 
-    # 페이지 상태 초기화
     if page_key not in st.session_state:
         st.session_state[page_key] = 0
     current_page = st.session_state[page_key]
-    # 범위 보정
     if current_page >= total_pages:
         st.session_state[page_key] = 0
         current_page = 0
@@ -667,40 +665,108 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
     end_idx = min(start_idx + ITEMS_PER_PAGE, total)
     display_df = df.iloc[start_idx:end_idx].reset_index(drop=True)
 
-    # 모바일에서도 테이블 형태 유지 - 가로 스크롤 허용
+    # ── HTML 테이블 헤더 ──────────────────────────────────────────
+    table_style = """
+    <style>
+    .zip-table { width:100%; border-collapse:collapse; font-size:0.85em; }
+    .zip-table th {
+        background:#f0f2f6; color:#555; font-weight:600;
+        padding:6px 4px; text-align:center;
+        border-bottom:2px solid #ddd; white-space:nowrap;
+    }
+    .zip-table td {
+        padding:7px 4px; text-align:center;
+        border-bottom:1px solid #eee; white-space:nowrap;
+        vertical-align:middle;
+    }
+    .zip-table tr:hover td { background: rgba(255,255,255,0.05); }
+    .zip-price { color:#E74C3C; font-weight:bold; }
+    .zip-btn-col { min-width:80px; max-width:160px; }
+    </style>
+    <table class="zip-table">
+    <thead><tr>
+      <th>계약일</th>
+      <th class="zip-btn-col">단지명</th>
+      <th>전용면적</th>
+      <th>층</th>
+      <th>거래유형</th>
+      <th>실거래가</th>
+    </tr></thead>
+    <tbody>
+    """
+
+    # 단지명 버튼용 행 인덱스 저장 (클릭 감지용)
+    btn_rows = []
+    for idx, row in display_df.iterrows():
+        price_str = format_to_korean_currency(row["거래금액(만 원)"])
+        if row.get("월세(만 원)", 0) > 0:
+            price_str = f"{price_str}/{row['월세(만 원)']}만"
+
+        apt_name_escaped = str(row["단지명"]).replace("<", "&lt;").replace(">", "&gt;")
+        table_style += f"""
+        <tr>
+          <td>{row['계약일']}</td>
+          <td class="zip-btn-col">__BTN_{start_idx + idx}__</td>
+          <td>{row['전용면적']}</td>
+          <td>{row['층']}</td>
+          <td>{row['거래유형']}</td>
+          <td class="zip-price">{price_str}</td>
+        </tr>"""
+        btn_rows.append((start_idx + idx, row))
+
+    table_style += "</tbody></table>"
+
+    # ── 테이블 + 버튼 렌더링 ────────────────────────────────────
+    # HTML 테이블은 단지명 클릭 불가 → 헤더+데이터 HTML, 단지명만 st.button 사용
+    # 대신 컬럼 6개를 매우 좁게 잡아 한 줄 유지
+
     st.markdown("""
-        <style>
-        [data-testid="column"] {
-            min-width: 0 !important;
-            overflow: hidden;
-        }
-        [data-testid="column"] > div {
-            font-size: 0.88em;
-        }
-        [data-testid="stButton"] button {
-            font-size: 0.88em !important;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        </style>
+    <style>
+    /* 모바일 포함 전체에서 컬럼이 세로 쌓이지 않도록 강제 */
+    [data-testid="stHorizontalBlock"] {
+        flex-wrap: nowrap !important;
+        overflow-x: auto;
+    }
+    [data-testid="column"] {
+        min-width: 0 !important;
+        flex-shrink: 1 !important;
+    }
+    [data-testid="column"] p,
+    [data-testid="column"] div {
+        font-size: 0.82em !important;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    [data-testid="stButton"] > button {
+        font-size: 0.82em !important;
+        padding: 2px 4px !important;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-height: 0 !important;
+        height: auto !important;
+    }
+    </style>
     """, unsafe_allow_html=True)
 
-    col_ratios = [1.2, 2.5, 1.5, 0.8, 1.5, 1.5]
+    # 헤더
+    col_ratios = [1.3, 2.2, 1.4, 0.7, 1.3, 1.6]
     headers = ["계약일", "단지명 👆", "전용면적", "층", "거래유형", "실거래가"]
-
     h_cols = st.columns(col_ratios)
     for i, header in enumerate(headers):
         h_cols[i].markdown(
-            f"<div style='text-align:center; color:gray; font-size:0.88em;'><b>{header}</b></div>",
+            f"<div style='text-align:center; color:gray; font-size:0.82em; white-space:nowrap;'><b>{header}</b></div>",
             unsafe_allow_html=True,
         )
-    st.markdown("<hr style='margin:0.3em 0; border-top:2px solid #ddd;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin:2px 0 4px 0; border-top:2px solid #ddd;'>", unsafe_allow_html=True)
 
+    # 데이터 행
     for idx, row in display_df.iterrows():
         cols = st.columns(col_ratios)
+
         cols[0].markdown(
-            f"<div style='text-align:center; line-height:2.5; font-size:0.88em;'>{row['계약일']}</div>",
+            f"<div style='text-align:center; font-size:0.82em; padding:6px 0; white-space:nowrap;'>{row['계약일']}</div>",
             unsafe_allow_html=True,
         )
 
@@ -721,15 +787,15 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
             st.rerun()
 
         cols[2].markdown(
-            f"<div style='text-align:center; line-height:2.5; font-size:0.88em;'>{row['전용면적']}</div>",
+            f"<div style='text-align:center; font-size:0.82em; padding:6px 0; white-space:nowrap;'>{row['전용면적']}</div>",
             unsafe_allow_html=True,
         )
         cols[3].markdown(
-            f"<div style='text-align:center; line-height:2.5; font-size:0.88em;'>{row['층']}</div>",
+            f"<div style='text-align:center; font-size:0.82em; padding:6px 0; white-space:nowrap;'>{row['층']}</div>",
             unsafe_allow_html=True,
         )
         cols[4].markdown(
-            f"<div style='text-align:center; line-height:2.5; font-size:0.88em;'>{row['거래유형']}</div>",
+            f"<div style='text-align:center; font-size:0.82em; padding:6px 0; white-space:nowrap;'>{row['거래유형']}</div>",
             unsafe_allow_html=True,
         )
 
@@ -738,7 +804,7 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
             price_str = f"{price_str}/{row['월세(만 원)']}만"
 
         cols[5].markdown(
-            f"<div style='text-align:center; line-height:2.5; font-size:0.88em; font-weight:bold; color:#E74C3C;'>{price_str}</div>",
+            f"<div style='text-align:center; font-size:0.82em; padding:6px 0; white-space:nowrap; font-weight:bold; color:#E74C3C;'>{price_str}</div>",
             unsafe_allow_html=True,
         )
         st.markdown("<hr style='margin:0; border-top:1px solid #eee;'>", unsafe_allow_html=True)
