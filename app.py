@@ -642,30 +642,29 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
         st.session_state[page_key] = 0
         current_page = 0
 
-    # ── 정렬 버튼 (상단) ─────────────────────────────────────────
+    # ── 정렬 버튼 (상단, 한 줄) ──────────────────────────────────
     sort_key = f"{page_key}_sort"
     if sort_key not in st.session_state:
         st.session_state[sort_key] = "최신순"
 
-    s1, s2, s3 = st.columns(3)
-    for col, label in zip([s1, s2, s3], ["최신순", "고가순", "저가순"]):
-        is_active = st.session_state[sort_key] == label
-        if col.button(
-            f"{'✅ ' if is_active else ''}{label}",
-            key=f"{sort_key}_{label}",
-            use_container_width=True,
-            type="primary" if is_active else "secondary",
-        ):
-            st.session_state[sort_key] = label
-            st.session_state[page_key] = 0
-            st.rerun()
+    selected_sort = st.radio(
+        "",
+        ["최신순", "고가순", "저가순"],
+        index=["최신순", "고가순", "저가순"].index(st.session_state[sort_key]),
+        horizontal=True,
+        key=f"{sort_key}_radio",
+        label_visibility="collapsed",
+    )
+    if selected_sort != st.session_state[sort_key]:
+        st.session_state[sort_key] = selected_sort
+        st.session_state[page_key] = 0
+        st.rerun()
 
     start_idx = current_page * ITEMS_PER_PAGE
     end_idx = min(start_idx + ITEMS_PER_PAGE, total)
 
     # 정렬 적용
-    sort_mode = st.session_state[sort_key]
-    if sort_mode == "최신순":
+    sort_mode = st.session_state[sort_key]    if sort_mode == "최신순":
         sorted_df = df.sort_values("계약일", ascending=False).reset_index(drop=True)
     elif sort_mode == "고가순":
         sorted_df = df.sort_values("거래금액(만 원)", ascending=False).reset_index(drop=True)
