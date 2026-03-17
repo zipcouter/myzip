@@ -1188,11 +1188,9 @@ elif page == "🏢 아파트 실거래가":
         if all_result_dfs:
             real_df = pd.concat(all_result_dfs, ignore_index=True)
 
-            # 거래유형 필터
             if trade_type != "전체":
                 real_df = real_df[real_df["거래유형"] == trade_type]
 
-            real_df = apply_date_filter(real_df, period, start_date, end_date)
             real_df = apply_area_filter(real_df, pyeong_type, is_apt=True)
 
             if dong_name not in ["전체 (구 단위)", "전체 (시/도 단위)"]:
@@ -1203,6 +1201,8 @@ elif page == "🏢 아파트 실거래가":
                     real_df["법정동"].str.contains(selected_apt, na=False)
                 ]
 
+            # 날짜 필터는 모든 필터 후 마지막 적용 (오늘 max() 정확도)
+            real_df = apply_date_filter(real_df, period, start_date, end_date)
             real_df = real_df.sort_values(by="계약일", ascending=False).reset_index(drop=True)
             st.session_state.res_df = real_df
             st.session_state["apt_list_page"] = 0
@@ -1334,7 +1334,6 @@ elif page == "🏘️ 비아파트 (오피스텔/빌라 등)":
             if trade_type != "전체":
                 real_df = real_df[real_df["거래유형"] == trade_type]
 
-            real_df = apply_date_filter(real_df, period, start_date, end_date)
             real_df = apply_area_filter(real_df, pyeong_type, is_apt=False)
 
             if dong_name not in ["전체 (구 단위)", "전체 (시/도 단위)"]:
@@ -1345,6 +1344,8 @@ elif page == "🏘️ 비아파트 (오피스텔/빌라 등)":
                     real_df["법정동"].str.contains(selected_nonapt, na=False)
                 ]
 
+            # 날짜 필터 마지막 적용
+            real_df = apply_date_filter(real_df, period, start_date, end_date)
             real_df = real_df.sort_values(by="계약일", ascending=False).reset_index(drop=True)
             st.session_state.res_nonapt_df = real_df
             st.session_state["nonapt_list_page"] = 0
