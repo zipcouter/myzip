@@ -1060,7 +1060,7 @@ if st.session_state.show_detail:
 
 # ─── 아파트 실거래가 페이지 ───────────────────────────────────────────
 elif page == "🏢 아파트 실거래가":
-    st.title("🏢 아파트 실거래가 조회")
+    st.markdown("### 🏢 아파트 실거래가 조회")
     st.write("---")
     st.subheader("1. 아파트 조회 조건")
 
@@ -1136,9 +1136,11 @@ elif page == "🏢 아파트 실거래가":
 
         api_target = "전월세" if trade_type in ["전세", "월세"] else "매매"
 
+        bar = st.progress(0, text="조회 중...")
         result_dfs, error_msgs = fetch_all_targets(
             targets, months_to_fetch, api_target, sido_name, is_apt=True
         )
+        bar.progress(100, text="조회 완료 ✅")
 
         if result_dfs:
             real_df = pd.concat(result_dfs, ignore_index=True)
@@ -1161,8 +1163,6 @@ elif page == "🏢 아파트 실거래가":
 
             if real_df.empty:
                 st.info("해당 기간/조건에 신고된 실거래 데이터가 없습니다.")
-            else:
-                st.success(f"✅ 100% 국토교통부 실제 {trade_type} 데이터 연동 완료! (총 {len(real_df):,}건)")
         else:
             st.session_state.res_df = pd.DataFrame()
             # ✅ FIX 2: error_msg 변수 버그 수정 (msg → error_msgs)
@@ -1184,7 +1184,7 @@ elif page == "🏢 아파트 실거래가":
 
 # ─── 비아파트 실거래가 페이지 ─────────────────────────────────────────
 elif page == "🏘️ 비아파트 (오피스텔/빌라 등)":
-    st.title("🏘️ 비아파트 실거래가 조회")
+    st.markdown("### 🏘️ 비아파트 실거래가 조회")
     st.write("---")
     st.subheader("1. 비아파트 조회 조건")
 
@@ -1265,9 +1265,11 @@ elif page == "🏘️ 비아파트 (오피스텔/빌라 등)":
 
         api_target = "전월세" if trade_type in ["전세", "월세"] else "매매"
 
+        bar = st.progress(0, text="조회 중...")
         result_dfs, error_msgs = fetch_all_targets(
             targets, months_to_fetch, api_target, sido_name, is_apt=False, bldg_type=bldg_type
         )
+        bar.progress(100, text="조회 완료 ✅")
 
         if result_dfs:
             real_df = pd.concat(result_dfs, ignore_index=True)
@@ -1290,8 +1292,6 @@ elif page == "🏘️ 비아파트 (오피스텔/빌라 등)":
 
             if real_df.empty:
                 st.info("해당 기간/조건에 신고된 실거래 데이터가 없습니다.")
-            else:
-                st.success(f"✅ 100% 국토교통부 실제 {bldg_type} {trade_type} 데이터 연동 완료! (총 {len(real_df):,}건)")
         else:
             st.session_state.res_nonapt_df = pd.DataFrame()
             # ✅ FIX 2: error_msg 변수 버그 수정
