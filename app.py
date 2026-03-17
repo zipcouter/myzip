@@ -675,10 +675,10 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
             overflow: hidden;
         }
         [data-testid="column"] > div {
-            font-size: 0.78em;
+            font-size: 0.88em;
         }
         [data-testid="stButton"] button {
-            font-size: 0.78em !important;
+            font-size: 0.88em !important;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -692,7 +692,7 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
     h_cols = st.columns(col_ratios)
     for i, header in enumerate(headers):
         h_cols[i].markdown(
-            f"<div style='text-align:center; color:gray; font-size:0.78em;'><b>{header}</b></div>",
+            f"<div style='text-align:center; color:gray; font-size:0.88em;'><b>{header}</b></div>",
             unsafe_allow_html=True,
         )
     st.markdown("<hr style='margin:0.3em 0; border-top:2px solid #ddd;'>", unsafe_allow_html=True)
@@ -700,7 +700,7 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
     for idx, row in display_df.iterrows():
         cols = st.columns(col_ratios)
         cols[0].markdown(
-            f"<div style='text-align:center; line-height:2.5; font-size:0.78em;'>{row['계약일']}</div>",
+            f"<div style='text-align:center; line-height:2.5; font-size:0.88em;'>{row['계약일']}</div>",
             unsafe_allow_html=True,
         )
 
@@ -721,15 +721,15 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
             st.rerun()
 
         cols[2].markdown(
-            f"<div style='text-align:center; line-height:2.5; font-size:0.78em;'>{row['전용면적']}</div>",
+            f"<div style='text-align:center; line-height:2.5; font-size:0.88em;'>{row['전용면적']}</div>",
             unsafe_allow_html=True,
         )
         cols[3].markdown(
-            f"<div style='text-align:center; line-height:2.5; font-size:0.78em;'>{row['층']}</div>",
+            f"<div style='text-align:center; line-height:2.5; font-size:0.88em;'>{row['층']}</div>",
             unsafe_allow_html=True,
         )
         cols[4].markdown(
-            f"<div style='text-align:center; line-height:2.5; font-size:0.78em;'>{row['거래유형']}</div>",
+            f"<div style='text-align:center; line-height:2.5; font-size:0.88em;'>{row['거래유형']}</div>",
             unsafe_allow_html=True,
         )
 
@@ -738,7 +738,7 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
             price_str = f"{price_str}/{row['월세(만 원)']}만"
 
         cols[5].markdown(
-            f"<div style='text-align:center; line-height:2.5; font-size:0.78em; font-weight:bold; color:#E74C3C;'>{price_str}</div>",
+            f"<div style='text-align:center; line-height:2.5; font-size:0.88em; font-weight:bold; color:#E74C3C;'>{price_str}</div>",
             unsafe_allow_html=True,
         )
         st.markdown("<hr style='margin:0; border-top:1px solid #eee;'>", unsafe_allow_html=True)
