@@ -197,10 +197,9 @@ def resolve_months(period, custom_dates=None):
     """기간 설정값을 (months_list, start_date, end_date) 튜플로 반환"""
     if period == "오늘":
         today = datetime.date.today()
-        # 이번 달 + 전달도 함께 조회 (월초일 경우 전달 데이터 포함)
-        prev = today.replace(day=1) - datetime.timedelta(days=1)
-        months = list({today.strftime("%Y%m"), prev.strftime("%Y%m")})
-        return months, None, None
+        two_days_ago = today - datetime.timedelta(days=2)
+        months = list({today.strftime("%Y%m"), two_days_ago.strftime("%Y%m")})
+        return months, two_days_ago, today
     elif period == "직접 설정":
         if custom_dates and len(custom_dates) == 2:
             start_date, end_date = custom_dates
@@ -215,16 +214,12 @@ def resolve_months(period, custom_dates=None):
 def apply_date_filter(df, period, start_date, end_date):
     """날짜 필터 적용"""
     if period == "오늘":
-        if df.empty:
+        if df.empty or start_date is None:
             return df
-        today_str = datetime.date.today().strftime("%Y-%m-%d")
-        # 오늘 계약일 데이터 우선
-        today_df = df[df["계약일"] == today_str]
-        if not today_df.empty:
-            return today_df
-        # 오늘 데이터 없으면 가장 최근 계약일
-        latest_date = df["계약일"].max()
-        return df[df["계약일"] == latest_date]
+        return df[
+            (df["계약일"] >= start_date.strftime("%Y-%m-%d")) &
+            (df["계약일"] <= end_date.strftime("%Y-%m-%d"))
+        ]
     elif period == "직접 설정" and start_date and end_date:
         return df[
             (df["계약일"] >= start_date.strftime("%Y-%m-%d")) &
