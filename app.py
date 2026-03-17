@@ -664,7 +664,8 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
     end_idx = min(start_idx + ITEMS_PER_PAGE, total)
 
     # 정렬 적용
-    sort_mode = st.session_state[sort_key]    if sort_mode == "최신순":
+    sort_mode = st.session_state[sort_key]
+    if sort_mode == "최신순":
         sorted_df = df.sort_values("계약일", ascending=False).reset_index(drop=True)
     elif sort_mode == "고가순":
         sorted_df = df.sort_values("거래금액(만 원)", ascending=False).reset_index(drop=True)
