@@ -730,9 +730,10 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
             st.session_state.detail_dong = row.get("법정동", "")
             st.session_state.detail_build_year = row.get("건축년도", "0")
             st.session_state.detail_jibun = row.get("지번", "")
+            # ✅ 이슈2: 목록에서 선택한 거래유형 저장 → 상세에서 기본값으로 사용
+            st.session_state.detail_from_trade_type = row.get("거래유형", "매매")
             st.session_state.detail_full_df = pd.DataFrame()
             st.session_state.detail_searched = False
-            # ✅ query_params로 이동 → 브라우저가 새 URL 로드 → 자동 최상단
             st.query_params["p"] = "detail"
             st.rerun()
 
@@ -765,7 +766,11 @@ def show_detail_page():
     lawd_cd = st.session_state.get("detail_lawd_cd", "")
     jibun = st.session_state.get("detail_jibun", "")
     is_apt = st.session_state.get("detail_is_apt", True)
+    # 목록에서 가져온 거래유형 (이슈2)
+    from_trade_type = st.session_state.get("detail_from_trade_type", "매매")
 
+    # ✅ 이슈3: 브라우저 뒤로가기 감지 → query_params에 p=detail 없으면 목록으로
+    # ✅ 이슈1: 스크롤 - 상세 페이지는 항상 새 URL(?p=detail)로 열리므로 브라우저가 자동 상단
     if st.button("⬅️ 이전 목록으로 돌아가기"):
         st.query_params.clear()
         st.rerun()
@@ -817,7 +822,10 @@ def show_detail_page():
         st.markdown("##### 🔍 단지 상세 조회 및 GAP 차트 설정")
         cond_col1, cond_col2, cond_col3 = st.columns([1.5, 1, 1.5])
         with cond_col1:
-            chart_view_type = st.radio("조회 항목 (차트)", ["매매", "전세", "매매+전세 통합"], horizontal=True)
+            # 목록에서 선택한 거래유형을 기본값으로
+            radio_opts = ["매매", "전세", "매매+전세 통합"]
+            default_idx = 0 if from_trade_type == "매매" else (1 if from_trade_type == "전세" else 0)
+            chart_view_type = st.radio("조회 항목 (차트)", radio_opts, index=default_idx, horizontal=True)
         with cond_col2:
             chart_period = st.selectbox("📅 조회 기간", PERIOD_OPTIONS, index=1, key="detail_period")
         with cond_col3:
@@ -939,8 +947,11 @@ def show_detail_page():
                 trade_opts = ["전체보기"] + sorted(detail_full_df["거래유형"].unique().tolist())
                 pyeong_opts = ["전체보기"] + sorted(detail_full_df["전용면적"].unique().tolist())
 
+                # from_trade_type을 기본값으로 설정
+                default_trade_idx = trade_opts.index(from_trade_type) if from_trade_type in trade_opts else 0
+
                 with list_col1:
-                    list_trade = st.selectbox("거래 유형 필터", trade_opts, key="detail_list_trade")
+                    list_trade = st.selectbox("거래 유형 필터", trade_opts, index=default_trade_idx, key="detail_list_trade")
                 with list_col2:
                     list_pyeong = st.selectbox("평형대 필터", pyeong_opts, key="detail_list_pyeong")
 
