@@ -629,9 +629,8 @@ def fetch_all_targets(targets, target_months, api_type, sido_name, is_apt=True, 
 
 
 # ---------------------------------------------------------
-# 📋 단지명 버튼 목록 UI (페이지네이션 포함)
+# 📋 단지명 버튼 목록 UI
 # ---------------------------------------------------------
-# ✅ FIX 6: 페이지네이션 도입
 def render_clickable_list(df, is_apt=True, page_key="list_page"):
     total = len(df)
     total_pages = max(1, (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
@@ -663,55 +662,96 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
 
     start_idx = current_page * ITEMS_PER_PAGE
     end_idx = min(start_idx + ITEMS_PER_PAGE, total)
-    display_df = df.iloc[start_idx:end_idx].reset_index(drop=True)
 
-    # 표시용 컬럼 가공
-    view = display_df.copy()
-    def make_price(row):
-        p = format_to_korean_currency(row["거래금액(만 원)"])
-        if row.get("월세(만 원)", 0) > 0:
-            return f"{p} / {row['월세(만 원)']}만원"
-        return p
+    # ── 정렬 옵션 (리스트 상단) ───────────────────────────────────
+    sort_key = f"{page_key}_sort"
+    if sort_key not in st.session_state:
+        st.session_state[sort_key] = "최신순"
 
-    view["실거래가"] = view.apply(make_price, axis=1)
-    view["면적/층"] = view["전용면적"].astype(str) + "  " + view["층"].astype(str)
-    show_df = view[["계약일", "단지명", "면적/층", "거래유형", "실거래가"]]
+    s_col1, s_col2, s_col3 = st.columns(3)
+    for col, label in zip([s_col1, s_col2, s_col3], ["최신순", "고가순", "저가순"]):
+        is_active = st.session_state[sort_key] == label
+        if col.button(
+            f"{'✅ ' if is_active else ''}{label}",
+            key=f"{sort_key}_{label}",
+            use_container_width=True,
+            type="primary" if is_active else "secondary",
+        ):
+            st.session_state[sort_key] = label
+            st.session_state[page_key] = 0  # 정렬 변경 시 첫 페이지로
+            st.rerun()
 
-    st.caption("👆 행을 클릭하면 단지 상세 정보로 이동합니다")
+    # 정렬 적용
+    sort_mode = st.session_state[sort_key]
+    if sort_mode == "최신순":
+        sorted_df = df.sort_values("계약일", ascending=False).reset_index(drop=True)
+    elif sort_mode == "고가순":
+        sorted_df = df.sort_values("거래금액(만 원)", ascending=False).reset_index(drop=True)
+    else:  # 저가순
+        sorted_df = df.sort_values("거래금액(만 원)", ascending=True).reset_index(drop=True)
 
-    event = st.dataframe(
-        show_df,
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        column_config={
-            "계약일":  st.column_config.TextColumn("계약일",  width="small"),
-            "단지명":  st.column_config.TextColumn("단지명",  width="medium"),
-            "면적/층": st.column_config.TextColumn("면적/층", width="small"),
-            "거래유형":st.column_config.TextColumn("거래유형",width="small"),
-            "실거래가":st.column_config.TextColumn("실거래가",width="medium"),
-        },
+    display_df = sorted_df.iloc[start_idx:end_idx].reset_index(drop=True)
+
+    # 버튼 스타일 (웹/모바일 공통)
+    st.markdown("""
+    <style>
+    div[data-testid="stButton"] > button {
+        width: 100%;
+        text-align: left !important;
+        padding: 10px 14px !important;
+        border-radius: 6px !important;
+        border: 1px solid rgba(128,128,128,0.25) !important;
+        background: transparent !important;
+        font-size: 0.93em !important;
+        line-height: 1.6 !important;
+        height: auto !important;
+        white-space: pre-wrap !important;
+        margin-bottom: 2px !important;
+    }
+    div[data-testid="stButton"] > button:hover {
+        border-color: #E74C3C !important;
+        background: rgba(231,76,60,0.06) !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # 헤더
+    st.markdown(
+        "<div style='padding:4px 14px 6px 14px; color:gray; font-size:0.8em; "
+        "border-bottom:2px solid #ddd; display:flex; justify-content:space-between;'>"
+        "<span>단지명 &nbsp;·&nbsp; 면적 &nbsp;·&nbsp; 층</span>"
+        "<span>실거래가 &nbsp;·&nbsp; 계약일</span>"
+        "</div>",
+        unsafe_allow_html=True,
     )
 
-    # 행 선택 시 상세 페이지로 이동
-    if event.selection and event.selection.rows:
-        selected_idx = event.selection.rows[0]
-        row = display_df.iloc[selected_idx]
+    for idx, row in display_df.iterrows():
+        price_str = format_to_korean_currency(row["거래금액(만 원)"])
+        if row.get("월세(만 원)", 0) > 0:
+            price_str = f"{price_str} / {row['월세(만 원)']}만원"
 
-        st.session_state.show_detail = True
-        st.session_state.detail_is_apt = is_apt
-        st.session_state.detail_bldg_type = st.session_state.get("nonapt_bldg_type", "오피스텔")
-        st.session_state.detail_sido = row.get("시도", "")
-        st.session_state.detail_sigungu = row.get("시군구", "")
-        st.session_state.detail_lawd_cd = row.get("법정동코드", "")
-        st.session_state.detail_apt_name = row["단지명"]
-        st.session_state.detail_dong = row.get("법정동", "")
-        st.session_state.detail_build_year = row.get("건축년도", "0")
-        st.session_state.detail_jibun = row.get("지번", "")
-        st.session_state.detail_full_df = pd.DataFrame()
-        st.session_state.detail_searched = False
-        st.rerun()
+        area  = str(row.get("전용면적", "")).replace("㎡", "")
+        floor = str(row.get("층", ""))
+        date  = str(row.get("계약일", ""))[5:]  # MM-DD
+
+        # 단지명 (굵게) + 면적·층 + 가격·날짜를 두 줄로
+        label = f"{row['단지명']}   {area}㎡ {floor}\n💰 {price_str}   📅 {date}"
+
+        btn_key = f"{'apt' if is_apt else 'non'}_btn_{page_key}_{start_idx + idx}"
+        if st.button(label, key=btn_key, use_container_width=True):
+            st.session_state.show_detail = True
+            st.session_state.detail_is_apt = is_apt
+            st.session_state.detail_bldg_type = st.session_state.get("nonapt_bldg_type", "오피스텔")
+            st.session_state.detail_sido = row.get("시도", "")
+            st.session_state.detail_sigungu = row.get("시군구", "")
+            st.session_state.detail_lawd_cd = row.get("법정동코드", "")
+            st.session_state.detail_apt_name = row["단지명"]
+            st.session_state.detail_dong = row.get("법정동", "")
+            st.session_state.detail_build_year = row.get("건축년도", "0")
+            st.session_state.detail_jibun = row.get("지번", "")
+            st.session_state.detail_full_df = pd.DataFrame()
+            st.session_state.detail_searched = False
+            st.rerun()
 
 
 # ---------------------------------------------------------
