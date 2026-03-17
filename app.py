@@ -480,22 +480,21 @@ def _parse_trade_items(root, is_rent, sido_name, sigungu_name, lawd_cd, is_apt, 
         m = get_xml_text(item, ["dealMonth", "월"], "01").zfill(2)
         d = get_xml_text(item, ["dealDay", "일"], "01").zfill(2)
         build_y = get_xml_text(item, ["buildYear", "건축년도"], "0")
+        deal_date_str = f"{y}-{m}-{d}"
 
-        # 신고일 추출 (rgstDate: YYYYMMDD 형식)
-        rgst_raw = get_xml_text(item, ["rgstDate", "신고일"], "")
-        if rgst_raw and len(rgst_raw) == 8:
-            rgst_date = f"{rgst_raw[:4]}-{rgst_raw[4:6]}-{rgst_raw[6:8]}"
-        else:
-            rgst_date = f"{y}-{m}-{d}"  # 신고일 없으면 계약일로 fallback
-
-        # 계약일 → 신고일까지 차이 계산 (표시용)
-        try:
-            deal_dt = datetime.date(int(y), int(m), int(d))
-            rgst_dt = datetime.date.fromisoformat(rgst_date)
-            days_diff = (rgst_dt - deal_dt).days
-            diff_str = f"+{days_diff}일 후 신고" if days_diff > 0 else "당일 신고"
-        except Exception:
-            diff_str = ""
+        # 신고일 파싱 - 여러 형식 대응
+        rgst_raw = get_xml_text(item, ["rgstDate", "rgstdate", "신고일", "dealRgstDate"], "").strip()
+        rgst_date = ""
+        if rgst_raw:
+            # YYYYMMDD 형식
+            if len(rgst_raw) == 8 and rgst_raw.isdigit():
+                rgst_date = f"{rgst_raw[:4]}-{rgst_raw[4:6]}-{rgst_raw[6:8]}"
+            # YYYY-MM-DD 형식
+            elif len(rgst_raw) == 10 and rgst_raw[4] == "-":
+                rgst_date = rgst_raw
+        # 신고일 없으면 계약일 사용
+        if not rgst_date:
+            rgst_date = deal_date_str
 
         req_gbn = get_xml_text(item, ["reqGbn", "신고구분"], "")
         broker = get_xml_text(item, ["estateAgncyNm", "중개사소재지"], "")
@@ -528,9 +527,8 @@ def _parse_trade_items(root, is_rent, sido_name, sigungu_name, lawd_cd, is_apt, 
             area_fmt = "0㎡"
 
         results.append({
-            "신고일": rgst_date,        # 신고일 기준 (오늘 필터에 사용)
-            "계약일": f"{y}-{m}-{d}",  # 실제 계약일 (참고용)
-            "신고정보": diff_str,        # 계약 후 X일 후 신고
+            "신고일": rgst_date,
+            "계약일": deal_date_str,
             "시도": sido_name,
             "시군구": sigungu_name,
             "법정동코드": lawd_cd,
@@ -732,12 +730,14 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
 
         area       = str(row.get("전용면적", "")).replace("㎡", "")
         floor      = str(row.get("층", ""))
-        rgst_date  = str(row.get("신고일", ""))[5:]   # MM-DD
-        deal_date  = str(row.get("계약일", ""))[5:]   # MM-DD
-        diff_str   = str(row.get("신고정보", ""))
+        rgst_date  = str(row.get("신고일", ""))
+        deal_date  = str(row.get("계약일", ""))
 
-        # 신고일 (계약일) 형태로 표시
-        date_label = f"{rgst_date}신고({deal_date}계약)" if rgst_date != deal_date else f"{rgst_date}"
+        # 신고일과 계약일이 다를 때만 계약일 병기
+        if rgst_date and deal_date and rgst_date != deal_date:
+            date_label = f"{rgst_date[5:]}신고 ({deal_date[5:]}계약)"
+        else:
+            date_label = rgst_date[5:] if rgst_date else deal_date[5:]
 
         label = f"{row['단지명']}   {area}㎡ {floor}\n💰 {price_str}   📅 {date_label}"
 
