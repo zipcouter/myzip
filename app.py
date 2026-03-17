@@ -196,8 +196,9 @@ def get_months_from_dates(start_d, end_d):
 def resolve_months(period, custom_dates=None):
     """기간 설정값을 (months_list, start_date, end_date) 튜플로 반환"""
     if period == "오늘":
-        today = datetime.date.today()
-        return [today.strftime("%Y%m")], today, today
+        # 국토부 API는 익일 공개 → 오늘 선택 시 어제 데이터 조회
+        yesterday = datetime.date.today() - datetime.timedelta(days=1)
+        return [yesterday.strftime("%Y%m")], yesterday, yesterday
     elif period == "직접 설정":
         if custom_dates and len(custom_dates) == 2:
             start_date, end_date = custom_dates
@@ -213,8 +214,8 @@ def apply_date_filter(df, period, start_date, end_date):
     """신고일 기준 날짜 필터 적용"""
     date_col = "신고일" if "신고일" in df.columns else "계약일"
     if period == "오늘":
-        today_str = datetime.date.today().strftime("%Y-%m-%d")
-        return df[df[date_col] == today_str]
+        yesterday_str = (datetime.date.today() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+        return df[df[date_col] == yesterday_str]
     elif period == "직접 설정" and start_date and end_date:
         return df[
             (df[date_col] >= start_date.strftime("%Y-%m-%d")) &
@@ -1221,7 +1222,7 @@ elif page == "🏢 아파트 실거래가":
 
             if real_df.empty:
                 if period == "오늘":
-                    st.info("📋 오늘 신고된 실거래 데이터가 아직 없습니다.\n\n국토부 API는 실제 계약일 기준 1~3일 지연이 있습니다. '이번 달' 또는 '최근 3개월'로 조회해보세요.")
+                    st.info("📋 어제 신고된 실거래 데이터가 없습니다. '이번 달'로 조회해보세요.")
                 else:
                     st.info("해당 기간/조건에 신고된 실거래 데이터가 없습니다.")
         else:
@@ -1363,7 +1364,7 @@ elif page == "🏘️ 비아파트 (오피스텔/빌라 등)":
 
             if real_df.empty:
                 if period == "오늘":
-                    st.info("📋 오늘 신고된 실거래 데이터가 아직 없습니다.\n\n국토부 API는 1~3일 지연이 있습니다. '이번 달'로 조회해보세요.")
+                    st.info("📋 어제 신고된 실거래 데이터가 없습니다. '이번 달'로 조회해보세요.")
                 else:
                     st.info("해당 기간/조건에 신고된 실거래 데이터가 없습니다.")
         else:
