@@ -1185,7 +1185,7 @@ elif page == "🏢 아파트 실거래가":
         trade_str = st.session_state.apt_trade_type
         df = st.session_state.get("res_df", pd.DataFrame()).copy()
 
-        st.subheader(f"📊 {loc_str} 아파트 {trade_str} 리스트")
+        st.markdown(f"##### 📊 {loc_str} 아파트 {trade_str} 리스트")
         if not df.empty:
             render_clickable_list(df, is_apt=True, page_key="apt_list_page")
 
@@ -1314,6 +1314,6 @@ elif page == "🏘️ 비아파트 (오피스텔/빌라 등)":
         trade_str = st.session_state.nonapt_trade_type
         df = st.session_state.get("res_nonapt_df", pd.DataFrame()).copy()
 
-        st.subheader(f"📊 {loc_str} 비아파트 {trade_str} 리스트")
+        st.markdown(f"##### 📊 {loc_str} 비아파트 {trade_str} 리스트")
         if not df.empty:
             render_clickable_list(df, is_apt=False, page_key="nonapt_list_page")
