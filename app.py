@@ -819,22 +819,31 @@ def show_detail_page():
 
     # ─── 아파트 상세 ───────────────────────────────────────────────────
     if is_apt:
-        st.markdown("##### 🔍 단지 상세 조회 및 GAP 차트 설정")
-        cond_col1, cond_col2, cond_col3 = st.columns([1.5, 1, 1.5])
+        st.markdown("##### 🔍 단지 상세 조회")
+        cond_col1, cond_col2 = st.columns([1, 1])
         with cond_col1:
-            # 목록에서 선택한 거래유형을 기본값으로
-            radio_opts = ["매매", "전세", "매매+전세 통합"]
-            default_idx = 0 if from_trade_type == "매매" else (1 if from_trade_type == "전세" else 0)
-            chart_view_type = st.radio("조회 항목 (차트)", radio_opts, index=default_idx, horizontal=True)
+            # 조회 조건: 매매 / 전세 / 월세 / 전체
+            trade_opts_map = {
+                "매매": ["매매"],
+                "전세": ["전세"],
+                "월세": ["월세"],
+                "전체": ["매매", "전세", "월세"],
+            }
+            default_view = from_trade_type if from_trade_type in trade_opts_map else "전체"
+            chart_view_type = st.radio(
+                "조회 항목", list(trade_opts_map.keys()),
+                index=list(trade_opts_map.keys()).index(default_view),
+                horizontal=True, key="detail_chart_view_radio"
+            )
         with cond_col2:
             chart_period = st.selectbox("📅 조회 기간", PERIOD_OPTIONS, index=1, key="detail_period")
-        with cond_col3:
-            custom_dates_dt = None
-            if chart_period == "직접 설정":
-                custom_dates_dt = st.date_input(
-                    "조회 시작/종료일",
-                    [datetime.date.today() - datetime.timedelta(days=30), datetime.date.today()],
-                )
+
+        custom_dates_dt = None
+        if chart_period == "직접 설정":
+            custom_dates_dt = st.date_input(
+                "조회 시작/종료일",
+                [datetime.date.today() - datetime.timedelta(days=30), datetime.date.today()],
+            )
 
         if st.button("📊 시세 및 실거래가 조회", type="primary", use_container_width=True):
             months_to_fetch, start_date, end_date = resolve_months(chart_period, custom_dates_dt)
@@ -842,14 +851,22 @@ def show_detail_page():
                 st.warning("종료일을 정확히 선택해주세요.")
                 st.stop()
 
+            target_types = trade_opts_map[chart_view_type]
             detail_dfs = []
-            df_sale, _ = fetch_real_data(sido, sigungu, lawd_cd, months_to_fetch, "매매", is_apt=True)
-            df_rent, _ = fetch_real_data(sido, sigungu, lawd_cd, months_to_fetch, "전월세", is_apt=True)
 
-            if df_sale is not None and not df_sale.empty:
-                detail_dfs.append(df_sale[df_sale["단지명"] == apt_name])
-            if df_rent is not None and not df_rent.empty:
-                detail_dfs.append(df_rent[df_rent["단지명"] == apt_name])
+            # 매매 필요 시
+            if "매매" in target_types:
+                df_sale, _ = fetch_real_data(sido, sigungu, lawd_cd, months_to_fetch, "매매", is_apt=True)
+                if df_sale is not None and not df_sale.empty:
+                    detail_dfs.append(df_sale[df_sale["단지명"] == apt_name])
+
+            # 전세/월세 필요 시
+            if "전세" in target_types or "월세" in target_types:
+                df_rent, _ = fetch_real_data(sido, sigungu, lawd_cd, months_to_fetch, "전월세", is_apt=True)
+                if df_rent is not None and not df_rent.empty:
+                    rent_f = df_rent[df_rent["단지명"] == apt_name]
+                    rent_f = rent_f[rent_f["거래유형"].isin(target_types)]
+                    detail_dfs.append(rent_f)
 
             if detail_dfs:
                 full_df = pd.concat(detail_dfs, ignore_index=True)
@@ -863,11 +880,11 @@ def show_detail_page():
 
         if st.session_state.get("detail_searched", False):
             detail_full_df = st.session_state.get("detail_full_df", pd.DataFrame())
-            current_view_type = st.session_state.get("detail_chart_view", "매매")
+            current_view_type = st.session_state.get("detail_chart_view", "전체")
 
             if not detail_full_df.empty:
                 st.write("---")
-                st.subheader("📈 시세 흐름 및 GAP 분석")
+                st.subheader("📈 시세 흐름 분석")
 
                 fig = go.Figure()
                 df_for_chart = detail_full_df.copy()
@@ -879,57 +896,48 @@ def show_detail_page():
                 sale_agg = pd.DataFrame()
                 rent_agg = pd.DataFrame()
 
-                if current_view_type in ["매매", "매매+전세 통합"]:
+                if current_view_type in ["매매", "전체"]:
                     df_sale_c = df_for_chart[df_for_chart["거래유형"] == "매매"]
                     if not df_sale_c.empty:
                         sale_agg = df_sale_c.groupby(["계약월", "계약월_한글"])["거래금액(만 원)"].mean().reset_index()
                         sale_agg["거래금액(억 원)"] = sale_agg["거래금액(만 원)"] / 10000
 
-                if current_view_type in ["전세", "매매+전세 통합"]:
+                if current_view_type in ["전세", "전체"]:
                     df_rent_c = df_for_chart[df_for_chart["거래유형"] == "전세"]
                     if not df_rent_c.empty:
                         rent_agg = df_rent_c.groupby(["계약월", "계약월_한글"])["거래금액(만 원)"].mean().reset_index()
                         rent_agg["거래금액(억 원)"] = rent_agg["거래금액(만 원)"] / 10000
 
-                if current_view_type == "매매+전세 통합" and not sale_agg.empty and not rent_agg.empty:
+                if not sale_agg.empty and not rent_agg.empty:
                     merged = pd.merge(
                         sale_agg, rent_agg, on=["계약월", "계약월_한글"], how="outer", suffixes=("_매매", "_전세")
                     ).sort_values("계약월")
                     merged["거래금액(억 원)_매매"] = merged["거래금액(억 원)_매매"].interpolate().ffill().bfill()
                     merged["거래금액(억 원)_전세"] = merged["거래금액(억 원)_전세"].interpolate().ffill().bfill()
                     merged["GAP(억 원)"] = merged["거래금액(억 원)_매매"] - merged["거래금액(억 원)_전세"]
-
                     fig.add_trace(go.Scatter(
-                        x=merged["계약월_한글"].tolist(),
-                        y=merged["거래금액(억 원)_매매"].tolist(),
-                        mode="lines+markers", name="평균 매매가",
-                        line=dict(color="#FF4B4B", width=2),
+                        x=merged["계약월_한글"].tolist(), y=merged["거래금액(억 원)_매매"].tolist(),
+                        mode="lines+markers", name="평균 매매가", line=dict(color="#FF4B4B", width=2),
                         customdata=merged["GAP(억 원)"].tolist(),
-                        hovertemplate="계약일: %{x}<br>평균 매매가: %{y:,.2f} 억원<br><b>🔥 GAP: %{customdata:,.2f} 억원</b><extra></extra>",
+                        hovertemplate="계약일: %{x}<br>매매가: %{y:,.2f}억원<br>🔥GAP: %{customdata:,.2f}억원<extra></extra>",
                     ))
                     fig.add_trace(go.Scatter(
-                        x=merged["계약월_한글"].tolist(),
-                        y=merged["거래금액(억 원)_전세"].tolist(),
-                        mode="lines+markers", name="평균 전세가",
-                        line=dict(color="#1f77b4", width=2),
-                        hovertemplate="계약일: %{x}<br>평균 전세가: %{y:,.2f} 억원<extra></extra>",
+                        x=merged["계약월_한글"].tolist(), y=merged["거래금액(억 원)_전세"].tolist(),
+                        mode="lines+markers", name="평균 전세가", line=dict(color="#1f77b4", width=2),
+                        hovertemplate="계약일: %{x}<br>전세가: %{y:,.2f}억원<extra></extra>",
                     ))
                 else:
                     if not sale_agg.empty:
                         fig.add_trace(go.Scatter(
-                            x=sale_agg["계약월_한글"].tolist(),
-                            y=sale_agg["거래금액(억 원)"].tolist(),
-                            mode="lines+markers", name="평균 매매가",
-                            line=dict(color="#FF4B4B", width=2),
-                            hovertemplate="계약일: %{x}<br>매매가: %{y:,.2f} 억원<extra></extra>",
+                            x=sale_agg["계약월_한글"].tolist(), y=sale_agg["거래금액(억 원)"].tolist(),
+                            mode="lines+markers", name="평균 매매가", line=dict(color="#FF4B4B", width=2),
+                            hovertemplate="계약일: %{x}<br>매매가: %{y:,.2f}억원<extra></extra>",
                         ))
                     if not rent_agg.empty:
                         fig.add_trace(go.Scatter(
-                            x=rent_agg["계약월_한글"].tolist(),
-                            y=rent_agg["거래금액(억 원)"].tolist(),
-                            mode="lines+markers", name="평균 전세가",
-                            line=dict(color="#1f77b4", width=2),
-                            hovertemplate="계약일: %{x}<br>전세가: %{y:,.2f} 억원<extra></extra>",
+                            x=rent_agg["계약월_한글"].tolist(), y=rent_agg["거래금액(억 원)"].tolist(),
+                            mode="lines+markers", name="평균 전세가", line=dict(color="#1f77b4", width=2),
+                            hovertemplate="계약일: %{x}<br>전세가: %{y:,.2f}억원<extra></extra>",
                         ))
 
                 fig.update_layout(
@@ -941,23 +949,25 @@ def show_detail_page():
                 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
                 st.write("---")
-                st.subheader("📋 실거래가 상세 내역 필터")
+                st.subheader("📋 실거래가 상세 내역")
 
-                list_col1, list_col2 = st.columns(2)
-                trade_opts = ["전체보기"] + sorted(detail_full_df["거래유형"].unique().tolist())
-                pyeong_opts = ["전체보기"] + sorted(detail_full_df["전용면적"].unique().tolist())
-
-                # from_trade_type을 기본값으로 설정
-                default_trade_idx = trade_opts.index(from_trade_type) if from_trade_type in trade_opts else 0
-
-                with list_col1:
-                    list_trade = st.selectbox("거래 유형 필터", trade_opts, index=default_trade_idx, key="detail_list_trade")
-                with list_col2:
+                # ── 멀티셀렉트 필터 ──────────────────────────────────────
+                filter_col1, filter_col2 = st.columns(2)
+                with filter_col1:
+                    available_types = sorted(detail_full_df["거래유형"].unique().tolist())
+                    selected_types = st.multiselect(
+                        "거래 유형 (복수 선택 가능)",
+                        options=available_types,
+                        default=available_types,  # 기본: 전체 선택
+                        key="detail_multi_trade",
+                    )
+                with filter_col2:
+                    pyeong_opts = ["전체보기"] + sorted(detail_full_df["전용면적"].unique().tolist())
                     list_pyeong = st.selectbox("평형대 필터", pyeong_opts, key="detail_list_pyeong")
 
                 filtered_data = detail_full_df.copy()
-                if list_trade != "전체보기":
-                    filtered_data = filtered_data[filtered_data["거래유형"] == list_trade]
+                if selected_types:
+                    filtered_data = filtered_data[filtered_data["거래유형"].isin(selected_types)]
                 if list_pyeong != "전체보기":
                     filtered_data = filtered_data[filtered_data["전용면적"] == list_pyeong]
 
