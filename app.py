@@ -116,7 +116,7 @@ def get_lat_lng_free(sido, sigungu, dong, apt_name):
 # ---------------------------------------------------------
 # 🌟 유틸리티 함수들
 # ---------------------------------------------------------
-PERIOD_OPTIONS = ["오늘", "이번 달", "최근 3개월", "최근 6개월", "최근 1년", "직접 설정"]
+PERIOD_OPTIONS = ["어제", "이번 달", "최근 3개월", "최근 6개월", "최근 1년", "직접 설정"]
 
 
 def format_to_korean_currency(price_manwon):
@@ -210,14 +210,15 @@ def resolve_months(period, custom_dates=None):
 
 
 def apply_date_filter(df, period, start_date, end_date):
-    """계약일 기준 날짜 필터 적용"""
+    """신고일 기준 날짜 필터 적용"""
+    date_col = "신고일" if "신고일" in df.columns else "계약일"
     if period == "오늘":
         today_str = datetime.date.today().strftime("%Y-%m-%d")
-        return df[df["계약일"] == today_str]
+        return df[df[date_col] == today_str]
     elif period == "직접 설정" and start_date and end_date:
         return df[
-            (df["계약일"] >= start_date.strftime("%Y-%m-%d")) &
-            (df["계약일"] <= end_date.strftime("%Y-%m-%d"))
+            (df[date_col] >= start_date.strftime("%Y-%m-%d")) &
+            (df[date_col] <= end_date.strftime("%Y-%m-%d"))
         ]
     return df
 
@@ -480,6 +481,22 @@ def _parse_trade_items(root, is_rent, sido_name, sigungu_name, lawd_cd, is_apt, 
         d = get_xml_text(item, ["dealDay", "일"], "01").zfill(2)
         build_y = get_xml_text(item, ["buildYear", "건축년도"], "0")
 
+        # 신고일 추출 (rgstDate: YYYYMMDD 형식)
+        rgst_raw = get_xml_text(item, ["rgstDate", "신고일"], "")
+        if rgst_raw and len(rgst_raw) == 8:
+            rgst_date = f"{rgst_raw[:4]}-{rgst_raw[4:6]}-{rgst_raw[6:8]}"
+        else:
+            rgst_date = f"{y}-{m}-{d}"  # 신고일 없으면 계약일로 fallback
+
+        # 계약일 → 신고일까지 차이 계산 (표시용)
+        try:
+            deal_dt = datetime.date(int(y), int(m), int(d))
+            rgst_dt = datetime.date.fromisoformat(rgst_date)
+            days_diff = (rgst_dt - deal_dt).days
+            diff_str = f"+{days_diff}일 후 신고" if days_diff > 0 else "당일 신고"
+        except Exception:
+            diff_str = ""
+
         req_gbn = get_xml_text(item, ["reqGbn", "신고구분"], "")
         broker = get_xml_text(item, ["estateAgncyNm", "중개사소재지"], "")
         trade_type_str = "⚠️ 개인거래" if req_gbn == "직거래" else "🤝 중개거래"
@@ -511,7 +528,9 @@ def _parse_trade_items(root, is_rent, sido_name, sigungu_name, lawd_cd, is_apt, 
             area_fmt = "0㎡"
 
         results.append({
-            "계약일": f"{y}-{m}-{d}",
+            "신고일": rgst_date,        # 신고일 기준 (오늘 필터에 사용)
+            "계약일": f"{y}-{m}-{d}",  # 실제 계약일 (참고용)
+            "신고정보": diff_str,        # 계약 후 X일 후 신고
             "시도": sido_name,
             "시군구": sigungu_name,
             "법정동코드": lawd_cd,
@@ -666,12 +685,11 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
     # 정렬 적용
     sort_mode = st.session_state[sort_key]
     if sort_mode == "최신순":
-        sorted_df = df.sort_values("계약일", ascending=False).reset_index(drop=True)
+        sorted_df = df.sort_values("신고일", ascending=False).reset_index(drop=True)
     elif sort_mode == "고가순":
         sorted_df = df.sort_values("거래금액(만 원)", ascending=False).reset_index(drop=True)
     else:
         sorted_df = df.sort_values("거래금액(만 원)", ascending=True).reset_index(drop=True)
-
     display_df = sorted_df.iloc[start_idx:end_idx].reset_index(drop=True)
 
     # 버튼 스타일 (웹/모바일 공통)
@@ -702,7 +720,7 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
         "<div style='padding:4px 14px 6px 14px; color:gray; font-size:0.8em; "
         "border-bottom:2px solid #ddd; display:flex; justify-content:space-between;'>"
         "<span>단지명 &nbsp;·&nbsp; 면적 &nbsp;·&nbsp; 층</span>"
-        "<span>실거래가 &nbsp;·&nbsp; 계약일</span>"
+        "<span>실거래가 &nbsp;·&nbsp; 신고일(계약일)</span>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -712,12 +730,16 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
         if row.get("월세(만 원)", 0) > 0:
             price_str = f"{price_str} / {row['월세(만 원)']}만원"
 
-        area  = str(row.get("전용면적", "")).replace("㎡", "")
-        floor = str(row.get("층", ""))
-        date  = str(row.get("계약일", ""))[5:]  # MM-DD
+        area       = str(row.get("전용면적", "")).replace("㎡", "")
+        floor      = str(row.get("층", ""))
+        rgst_date  = str(row.get("신고일", ""))[5:]   # MM-DD
+        deal_date  = str(row.get("계약일", ""))[5:]   # MM-DD
+        diff_str   = str(row.get("신고정보", ""))
 
-        # 단지명 (굵게) + 면적·층 + 가격·날짜를 두 줄로
-        label = f"{row['단지명']}   {area}㎡ {floor}\n💰 {price_str}   📅 {date}"
+        # 신고일 (계약일) 형태로 표시
+        date_label = f"{rgst_date}신고({deal_date}계약)" if rgst_date != deal_date else f"{rgst_date}"
+
+        label = f"{row['단지명']}   {area}㎡ {floor}\n💰 {price_str}   📅 {date_label}"
 
         btn_key = f"{'apt' if is_apt else 'non'}_btn_{page_key}_{start_idx + idx}"
         if st.button(label, key=btn_key, use_container_width=True):
@@ -974,7 +996,7 @@ def show_detail_page():
                 if filtered_data.empty:
                     st.warning("선택하신 조건의 최근 거래 내역이 없습니다.")
                 else:
-                    filtered_data = filtered_data.sort_values(by="계약일", ascending=False)
+                    filtered_data = filtered_data.sort_values(by="신고일", ascending=False)
 
                     def make_price_str(row):
                         p = format_to_korean_currency(row["거래금액(만 원)"])
@@ -1050,7 +1072,7 @@ def show_detail_page():
             if not detail_full_df.empty:
                 st.write("---")
                 st.subheader("📋 실거래가 상세 내역")
-                detail_full_df = detail_full_df.sort_values(by="계약일", ascending=False)
+                detail_full_df = detail_full_df.sort_values(by="신고일", ascending=False)
 
                 def make_price_str(row):
                     p = format_to_korean_currency(row["거래금액(만 원)"])
@@ -1114,7 +1136,7 @@ elif page == "🏢 아파트 실거래가":
     st.write("")
     cond_col1, cond_col2, cond_col3 = st.columns(3)
     with cond_col1:
-        trade_type = st.radio("🔄 거래 유형", ["매매", "전세", "월세"], horizontal=True, key="apt_trade")
+        trade_type = st.radio("🔄 거래 유형", ["전체", "매매", "전세", "월세"], horizontal=True, key="apt_trade")
     with cond_col2:
         period = st.selectbox("📅 조회 기간", PERIOD_OPTIONS, index=1, key="apt_period")
     with cond_col3:
@@ -1157,22 +1179,35 @@ elif page == "🏢 아파트 실거래가":
         else:
             targets = [(sigungu_name, sigungu_dict.get(sigungu_name))]
 
-        api_target = "전월세" if trade_type in ["전세", "월세"] else "매매"
-
         bar = st.progress(0, text="조회 중...")
-        result_dfs, error_msgs = fetch_all_targets(
-            targets, months_to_fetch, api_target, sido_name, is_apt=True
-        )
+
+        # 전체 선택 시 매매 + 전월세 모두 호출
+        all_result_dfs = []
+        all_error_msgs = []
+
+        if trade_type in ["매매", "전체"]:
+            dfs, errs = fetch_all_targets(targets, months_to_fetch, "매매", sido_name, is_apt=True)
+            all_result_dfs.extend(dfs)
+            all_error_msgs.extend(errs)
+
+        if trade_type in ["전세", "월세", "전체"]:
+            dfs, errs = fetch_all_targets(targets, months_to_fetch, "전월세", sido_name, is_apt=True)
+            all_result_dfs.extend(dfs)
+            all_error_msgs.extend(errs)
+
         bar.progress(100, text="조회 완료 ✅")
 
-        if result_dfs:
-            real_df = pd.concat(result_dfs, ignore_index=True)
-            real_df = real_df[real_df["거래유형"] == trade_type]
+        if all_result_dfs:
+            real_df = pd.concat(all_result_dfs, ignore_index=True)
+
+            # 거래유형 필터
+            if trade_type != "전체":
+                real_df = real_df[real_df["거래유형"] == trade_type]
+
             real_df = apply_date_filter(real_df, period, start_date, end_date)
             real_df = apply_area_filter(real_df, pyeong_type, is_apt=True)
 
             if dong_name not in ["전체 (구 단위)", "전체 (시/도 단위)"]:
-                # ✅ 이슈4 수정: 정확 매칭 (신월계동이 월계동에 포함되는 오류 방지)
                 real_df = real_df[real_df["법정동"] == dong_name]
             if selected_apt.strip():
                 real_df = real_df[
@@ -1180,17 +1215,19 @@ elif page == "🏢 아파트 실거래가":
                     real_df["법정동"].str.contains(selected_apt, na=False)
                 ]
 
-            real_df = real_df.sort_values(by="계약일", ascending=False).reset_index(drop=True)
+            real_df = real_df.sort_values(by="신고일", ascending=False).reset_index(drop=True)
             st.session_state.res_df = real_df
             st.session_state["apt_list_page"] = 0
 
             if real_df.empty:
-                st.info("해당 기간/조건에 신고된 실거래 데이터가 없습니다.")
+                if period == "오늘":
+                    st.info("📋 오늘 신고된 실거래 데이터가 아직 없습니다.\n\n국토부 API는 실제 계약일 기준 1~3일 지연이 있습니다. '이번 달' 또는 '최근 3개월'로 조회해보세요.")
+                else:
+                    st.info("해당 기간/조건에 신고된 실거래 데이터가 없습니다.")
         else:
             st.session_state.res_df = pd.DataFrame()
-            # ✅ FIX 2: error_msg 변수 버그 수정 (msg → error_msgs)
-            if error_msgs:
-                st.error(f"⚠️ {error_msgs[0]}")
+            if all_error_msgs:
+                st.error(f"⚠️ {all_error_msgs[0]}")
             else:
                 st.info("해당 기간/조건에 신고된 실거래 데이터가 없습니다.")
 
@@ -1245,7 +1282,7 @@ elif page == "🏘️ 비아파트 (오피스텔/빌라 등)":
     st.write("")
     cond_col1, cond_col2, cond_col3 = st.columns(3)
     with cond_col1:
-        trade_type = st.radio("🔄 거래 유형", ["매매", "전세", "월세"], horizontal=True, key="nonapt_trade")
+        trade_type = st.radio("🔄 거래 유형", ["전체", "매매", "전세", "월세"], horizontal=True, key="nonapt_trade")
     with cond_col2:
         period = st.selectbox("📅 조회 기간", PERIOD_OPTIONS, index=1, key="nonapt_period")
     with cond_col3:
@@ -1286,22 +1323,33 @@ elif page == "🏘️ 비아파트 (오피스텔/빌라 등)":
         else:
             targets = [(sigungu_name, sigungu_dict.get(sigungu_name))]
 
-        api_target = "전월세" if trade_type in ["전세", "월세"] else "매매"
-
         bar = st.progress(0, text="조회 중...")
-        result_dfs, error_msgs = fetch_all_targets(
-            targets, months_to_fetch, api_target, sido_name, is_apt=False, bldg_type=bldg_type
-        )
+
+        all_result_dfs = []
+        all_error_msgs = []
+
+        if trade_type in ["매매", "전체"]:
+            dfs, errs = fetch_all_targets(targets, months_to_fetch, "매매", sido_name, is_apt=False, bldg_type=bldg_type)
+            all_result_dfs.extend(dfs)
+            all_error_msgs.extend(errs)
+
+        if trade_type in ["전세", "월세", "전체"]:
+            dfs, errs = fetch_all_targets(targets, months_to_fetch, "전월세", sido_name, is_apt=False, bldg_type=bldg_type)
+            all_result_dfs.extend(dfs)
+            all_error_msgs.extend(errs)
+
         bar.progress(100, text="조회 완료 ✅")
 
-        if result_dfs:
-            real_df = pd.concat(result_dfs, ignore_index=True)
-            real_df = real_df[real_df["거래유형"] == trade_type]
+        if all_result_dfs:
+            real_df = pd.concat(all_result_dfs, ignore_index=True)
+
+            if trade_type != "전체":
+                real_df = real_df[real_df["거래유형"] == trade_type]
+
             real_df = apply_date_filter(real_df, period, start_date, end_date)
             real_df = apply_area_filter(real_df, pyeong_type, is_apt=False)
 
             if dong_name not in ["전체 (구 단위)", "전체 (시/도 단위)"]:
-                # ✅ 이슈4 수정: 정확 매칭
                 real_df = real_df[real_df["법정동"] == dong_name]
             if selected_nonapt.strip():
                 real_df = real_df[
@@ -1309,12 +1357,15 @@ elif page == "🏘️ 비아파트 (오피스텔/빌라 등)":
                     real_df["법정동"].str.contains(selected_nonapt, na=False)
                 ]
 
-            real_df = real_df.sort_values(by="계약일", ascending=False).reset_index(drop=True)
+            real_df = real_df.sort_values(by="신고일", ascending=False).reset_index(drop=True)
             st.session_state.res_nonapt_df = real_df
             st.session_state["nonapt_list_page"] = 0
 
             if real_df.empty:
-                st.info("해당 기간/조건에 신고된 실거래 데이터가 없습니다.")
+                if period == "오늘":
+                    st.info("📋 오늘 신고된 실거래 데이터가 아직 없습니다.\n\n국토부 API는 1~3일 지연이 있습니다. '이번 달'로 조회해보세요.")
+                else:
+                    st.info("해당 기간/조건에 신고된 실거래 데이터가 없습니다.")
         else:
             st.session_state.res_nonapt_df = pd.DataFrame()
             # ✅ FIX 2: error_msg 변수 버그 수정
