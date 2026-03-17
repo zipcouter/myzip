@@ -821,7 +821,7 @@ def show_detail_page():
 
     # ─── 아파트 상세 ───────────────────────────────────────────────────
     if is_apt:
-        st.subheader("🔍 단지 상세 조회 및 GAP 차트 설정")
+        st.markdown("##### 🔍 단지 상세 조회 및 GAP 차트 설정")
         cond_col1, cond_col2, cond_col3 = st.columns([1.5, 1, 1.5])
         with cond_col1:
             chart_view_type = st.radio("조회 항목 (차트)", ["매매", "전세", "매매+전세 통합"], horizontal=True)
@@ -982,7 +982,7 @@ def show_detail_page():
 
     # ─── 비아파트 상세 ──────────────────────────────────────────────────
     else:
-        st.subheader("🔍 비아파트 상세 조회")
+        st.markdown("##### 🔍 비아파트 상세 조회")
         cond_col1, cond_col2, cond_col3 = st.columns(3)
         with cond_col1:
             trade_type_det = st.radio("🔄 거래 유형", ["매매", "전세", "월세"], horizontal=True, key="det_nonapt_trade")
