@@ -196,9 +196,11 @@ def get_months_from_dates(start_d, end_d):
 def resolve_months(period, custom_dates=None):
     """기간 설정값을 (months_list, start_date, end_date) 튜플로 반환"""
     if period == "오늘":
-        # 국토부 API는 익일 공개 → 오늘 선택 시 어제 데이터 조회
-        yesterday = datetime.date.today() - datetime.timedelta(days=1)
-        return [yesterday.strftime("%Y%m")], yesterday, yesterday
+        today = datetime.date.today()
+        # 이번 달 + 전달도 함께 조회 (월초일 경우 전달 데이터 포함)
+        prev = today.replace(day=1) - datetime.timedelta(days=1)
+        months = list({today.strftime("%Y%m"), prev.strftime("%Y%m")})
+        return months, None, None
     elif period == "직접 설정":
         if custom_dates and len(custom_dates) == 2:
             start_date, end_date = custom_dates
@@ -211,15 +213,22 @@ def resolve_months(period, custom_dates=None):
 
 
 def apply_date_filter(df, period, start_date, end_date):
-    """신고일 기준 날짜 필터 적용"""
-    date_col = "신고일" if "신고일" in df.columns else "계약일"
+    """날짜 필터 적용"""
     if period == "오늘":
-        yesterday_str = (datetime.date.today() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-        return df[df[date_col] == yesterday_str]
+        if df.empty:
+            return df
+        today_str = datetime.date.today().strftime("%Y-%m-%d")
+        # 오늘 계약일 데이터 우선
+        today_df = df[df["계약일"] == today_str]
+        if not today_df.empty:
+            return today_df
+        # 오늘 데이터 없으면 가장 최근 계약일
+        latest_date = df["계약일"].max()
+        return df[df["계약일"] == latest_date]
     elif period == "직접 설정" and start_date and end_date:
         return df[
-            (df[date_col] >= start_date.strftime("%Y-%m-%d")) &
-            (df[date_col] <= end_date.strftime("%Y-%m-%d"))
+            (df["계약일"] >= start_date.strftime("%Y-%m-%d")) &
+            (df["계약일"] <= end_date.strftime("%Y-%m-%d"))
         ]
     return df
 
@@ -483,20 +492,6 @@ def _parse_trade_items(root, is_rent, sido_name, sigungu_name, lawd_cd, is_apt, 
         build_y = get_xml_text(item, ["buildYear", "건축년도"], "0")
         deal_date_str = f"{y}-{m}-{d}"
 
-        # 신고일 파싱 - 여러 형식 대응
-        rgst_raw = get_xml_text(item, ["rgstDate", "rgstdate", "신고일", "dealRgstDate"], "").strip()
-        rgst_date = ""
-        if rgst_raw:
-            # YYYYMMDD 형식
-            if len(rgst_raw) == 8 and rgst_raw.isdigit():
-                rgst_date = f"{rgst_raw[:4]}-{rgst_raw[4:6]}-{rgst_raw[6:8]}"
-            # YYYY-MM-DD 형식
-            elif len(rgst_raw) == 10 and rgst_raw[4] == "-":
-                rgst_date = rgst_raw
-        # 신고일 없으면 계약일 사용
-        if not rgst_date:
-            rgst_date = deal_date_str
-
         req_gbn = get_xml_text(item, ["reqGbn", "신고구분"], "")
         broker = get_xml_text(item, ["estateAgncyNm", "중개사소재지"], "")
         trade_type_str = "⚠️ 개인거래" if req_gbn == "직거래" else "🤝 중개거래"
@@ -528,7 +523,6 @@ def _parse_trade_items(root, is_rent, sido_name, sigungu_name, lawd_cd, is_apt, 
             area_fmt = "0㎡"
 
         results.append({
-            "신고일": rgst_date,
             "계약일": deal_date_str,
             "시도": sido_name,
             "시군구": sigungu_name,
@@ -684,7 +678,7 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
     # 정렬 적용
     sort_mode = st.session_state[sort_key]
     if sort_mode == "최신순":
-        sorted_df = df.sort_values("신고일", ascending=False).reset_index(drop=True)
+        sorted_df = df.sort_values("계약일", ascending=False).reset_index(drop=True)
     elif sort_mode == "고가순":
         sorted_df = df.sort_values("거래금액(만 원)", ascending=False).reset_index(drop=True)
     else:
@@ -719,7 +713,7 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
         "<div style='padding:4px 14px 6px 14px; color:gray; font-size:0.8em; "
         "border-bottom:2px solid #ddd; display:flex; justify-content:space-between;'>"
         "<span>단지명 &nbsp;·&nbsp; 면적 &nbsp;·&nbsp; 층</span>"
-        "<span>실거래가 &nbsp;·&nbsp; 신고일(계약일)</span>"
+        "<span>실거래가 &nbsp;·&nbsp; 계약일</span>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -731,14 +725,7 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
 
         area       = str(row.get("전용면적", "")).replace("㎡", "")
         floor      = str(row.get("층", ""))
-        rgst_date  = str(row.get("신고일", ""))
-        deal_date  = str(row.get("계약일", ""))
-
-        # 신고일과 계약일이 다를 때만 계약일 병기
-        if rgst_date and deal_date and rgst_date != deal_date:
-            date_label = f"{rgst_date[5:]}신고 ({deal_date[5:]}계약)"
-        else:
-            date_label = rgst_date[5:] if rgst_date else deal_date[5:]
+        date_label = str(row.get("계약일", ""))[5:]  # MM-DD
 
         label = f"{row['단지명']}   {area}㎡ {floor}\n💰 {price_str}   📅 {date_label}"
 
@@ -997,7 +984,7 @@ def show_detail_page():
                 if filtered_data.empty:
                     st.warning("선택하신 조건의 최근 거래 내역이 없습니다.")
                 else:
-                    filtered_data = filtered_data.sort_values(by="신고일", ascending=False)
+                    filtered_data = filtered_data.sort_values(by="계약일", ascending=False)
 
                     def make_price_str(row):
                         p = format_to_korean_currency(row["거래금액(만 원)"])
@@ -1073,7 +1060,7 @@ def show_detail_page():
             if not detail_full_df.empty:
                 st.write("---")
                 st.subheader("📋 실거래가 상세 내역")
-                detail_full_df = detail_full_df.sort_values(by="신고일", ascending=False)
+                detail_full_df = detail_full_df.sort_values(by="계약일", ascending=False)
 
                 def make_price_str(row):
                     p = format_to_korean_currency(row["거래금액(만 원)"])
@@ -1216,13 +1203,13 @@ elif page == "🏢 아파트 실거래가":
                     real_df["법정동"].str.contains(selected_apt, na=False)
                 ]
 
-            real_df = real_df.sort_values(by="신고일", ascending=False).reset_index(drop=True)
+            real_df = real_df.sort_values(by="계약일", ascending=False).reset_index(drop=True)
             st.session_state.res_df = real_df
             st.session_state["apt_list_page"] = 0
 
             if real_df.empty:
                 if period == "오늘":
-                    st.info("📋 어제 신고된 실거래 데이터가 없습니다. '이번 달'로 조회해보세요.")
+                    st.info("📋 이번 달 실거래 데이터가 없습니다.")
                 else:
                     st.info("해당 기간/조건에 신고된 실거래 데이터가 없습니다.")
         else:
@@ -1358,13 +1345,13 @@ elif page == "🏘️ 비아파트 (오피스텔/빌라 등)":
                     real_df["법정동"].str.contains(selected_nonapt, na=False)
                 ]
 
-            real_df = real_df.sort_values(by="신고일", ascending=False).reset_index(drop=True)
+            real_df = real_df.sort_values(by="계약일", ascending=False).reset_index(drop=True)
             st.session_state.res_nonapt_df = real_df
             st.session_state["nonapt_list_page"] = 0
 
             if real_df.empty:
                 if period == "오늘":
-                    st.info("📋 어제 신고된 실거래 데이터가 없습니다. '이번 달'로 조회해보세요.")
+                    st.info("📋 이번 달 실거래 데이터가 없습니다.")
                 else:
                     st.info("해당 기간/조건에 신고된 실거래 데이터가 없습니다.")
         else:
