@@ -756,9 +756,15 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
 # 🔍 상세 페이지
 # ---------------------------------------------------------
 def show_detail_page():
-    # 최상단 스크롤 (components.v1.html 사용 - Streamlit에서 JS 실행 가능한 유일한 방법)
+    # 최상단 스크롤 - setTimeout으로 rerun 후 렌더링 완료 시점에 실행
     import streamlit.components.v1 as components
-    components.html("<script>window.parent.document.querySelector('section.main').scrollTo(0, 0);</script>", height=0)
+    components.html("""
+        <script>
+            setTimeout(function() {
+                window.parent.document.querySelector('section.main').scrollTo({top: 0, behavior: 'instant'});
+            }, 50);
+        </script>
+    """, height=0)
 
     apt_name = st.session_state.get("detail_apt_name", "이름없음")
     dong_name = st.session_state.get("detail_dong", "")
