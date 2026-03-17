@@ -721,7 +721,6 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
 
         btn_key = f"{'apt' if is_apt else 'non'}_btn_{page_key}_{start_idx + idx}"
         if st.button(label, key=btn_key, use_container_width=True):
-            st.session_state.show_detail = True
             st.session_state.detail_is_apt = is_apt
             st.session_state.detail_bldg_type = st.session_state.get("nonapt_bldg_type", "오피스텔")
             st.session_state.detail_sido = row.get("시도", "")
@@ -733,6 +732,8 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
             st.session_state.detail_jibun = row.get("지번", "")
             st.session_state.detail_full_df = pd.DataFrame()
             st.session_state.detail_searched = False
+            # ✅ query_params로 이동 → 브라우저가 새 URL 로드 → 자동 최상단
+            st.query_params["p"] = "detail"
             st.rerun()
 
     # ── 페이지 버튼 (리스트 하단) ────────────────────────────────
@@ -756,16 +757,6 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
 # 🔍 상세 페이지
 # ---------------------------------------------------------
 def show_detail_page():
-    # 최상단 스크롤 - setTimeout으로 rerun 후 렌더링 완료 시점에 실행
-    import streamlit.components.v1 as components
-    components.html("""
-        <script>
-            setTimeout(function() {
-                window.parent.document.querySelector('section.main').scrollTo({top: 0, behavior: 'instant'});
-            }, 50);
-        </script>
-    """, height=0)
-
     apt_name = st.session_state.get("detail_apt_name", "이름없음")
     dong_name = st.session_state.get("detail_dong", "")
     build_year = st.session_state.get("detail_build_year", "0")
@@ -776,7 +767,7 @@ def show_detail_page():
     is_apt = st.session_state.get("detail_is_apt", True)
 
     if st.button("⬅️ 이전 목록으로 돌아가기"):
-        st.session_state.show_detail = False
+        st.query_params.clear()
         st.rerun()
 
     title_icon = "🏢" if is_apt else "🏘️"
@@ -1060,12 +1051,13 @@ def show_detail_page():
 
 
 # ---------------------------------------------------------
-# 📌 PAGE 컨트롤러
+# 📌 PAGE 컨트롤러 (query_params 기반 라우팅)
 # ---------------------------------------------------------
-if "show_detail" not in st.session_state:
-    st.session_state.show_detail = False
+# URL ?p=detail 이면 상세 페이지, 아니면 목록 페이지
+params = st.query_params
+current_p = params.get("p", "list")
 
-if st.session_state.show_detail:
+if current_p == "detail":
     show_detail_page()
 
 # ─── 아파트 실거래가 페이지 ───────────────────────────────────────────
