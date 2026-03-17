@@ -167,52 +167,6 @@ def find_related_apt_names(df, apt_name, jibun):
     return related_names, representative
 
 
-def merge_split_complexes(df):
-    """
-    목록 단계에서 같은 지번의 분리 단지를 하나의 행으로 통합.
-
-    예) 지번 13번지에 미륭/미성/삼호3 → '미륭·미성·삼호3' 단일 행으로 표시
-    - 단지명: 알파벳/가나다순 정렬 후 '·'로 결합
-    - 거래금액: 해당 지번 전체 평균
-    - 계약일: 가장 최근 날짜
-    - 건축년도/층/면적: 첫 번째 행 값 사용
-    """
-    if df.empty:
-        return df
-
-    # 지번이 비어있거나 단일 단지는 그대로 유지
-    rows = []
-    # (법정동, 지번) 기준으로 그룹
-    group_keys = ["법정동코드", "법정동", "지번", "전용면적", "거래유형"]
-    # 지번이 있는 행만 그룹핑
-    has_jibun = df[df["지번"].astype(str).str.strip() != ""].copy()
-    no_jibun  = df[df["지번"].astype(str).str.strip() == ""].copy()
-
-    if has_jibun.empty:
-        return df
-
-    for keys, group in has_jibun.groupby(["법정동코드", "지번"], sort=False):
-        unique_names = sorted(group["단지명"].dropna().unique().tolist())
-
-        if len(unique_names) <= 1:
-            # 단일 단지 → 원본 행 그대로
-            rows.append(group)
-        else:
-            # 복수 단지 → 대표 행 1개 생성
-            merged_name = "·".join(unique_names)
-            rep = group.sort_values("계약일", ascending=False).iloc[0].copy()
-            rep["단지명"] = merged_name
-            # 거래금액은 그룹 평균
-            try:
-                rep["거래금액(만 원)"] = int(group["거래금액(만 원)"].mean())
-            except Exception:
-                pass
-            rows.append(pd.DataFrame([rep]))
-
-    merged = pd.concat(rows + [no_jibun], ignore_index=True) if rows else no_jibun
-    return merged
-
-
 def get_recent_months(n):
     today = datetime.date.today()
     months = []
@@ -713,21 +667,40 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
     end_idx = min(start_idx + ITEMS_PER_PAGE, total)
     display_df = df.iloc[start_idx:end_idx].reset_index(drop=True)
 
+    # 모바일에서도 테이블 형태 유지 - 가로 스크롤 허용
+    st.markdown("""
+        <style>
+        [data-testid="column"] {
+            min-width: 0 !important;
+            overflow: hidden;
+        }
+        [data-testid="column"] > div {
+            font-size: 0.78em;
+        }
+        [data-testid="stButton"] button {
+            font-size: 0.78em !important;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
     col_ratios = [1.2, 2.5, 1.5, 0.8, 1.5, 1.5]
-    headers = ["계약일", "단지명(클릭 시 이동) 👆", "전용면적", "층", "거래유형", "실거래가(보증금)"]
+    headers = ["계약일", "단지명 👆", "전용면적", "층", "거래유형", "실거래가"]
 
     h_cols = st.columns(col_ratios)
     for i, header in enumerate(headers):
         h_cols[i].markdown(
-            f"<div style='text-align: center; color: gray; font-size: 0.9em;'><b>{header}</b></div>",
+            f"<div style='text-align:center; color:gray; font-size:0.78em;'><b>{header}</b></div>",
             unsafe_allow_html=True,
         )
-    st.markdown("<hr style='margin: 0.5em 0px; border-top: 2px solid #ddd;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin:0.3em 0; border-top:2px solid #ddd;'>", unsafe_allow_html=True)
 
     for idx, row in display_df.iterrows():
         cols = st.columns(col_ratios)
         cols[0].markdown(
-            f"<div style='text-align: center; line-height: 2.5;'>{row['계약일']}</div>",
+            f"<div style='text-align:center; line-height:2.5; font-size:0.78em;'>{row['계약일']}</div>",
             unsafe_allow_html=True,
         )
 
@@ -748,27 +721,27 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
             st.rerun()
 
         cols[2].markdown(
-            f"<div style='text-align: center; line-height: 2.5;'>{row['전용면적']}</div>",
+            f"<div style='text-align:center; line-height:2.5; font-size:0.78em;'>{row['전용면적']}</div>",
             unsafe_allow_html=True,
         )
         cols[3].markdown(
-            f"<div style='text-align: center; line-height: 2.5;'>{row['층']}</div>",
+            f"<div style='text-align:center; line-height:2.5; font-size:0.78em;'>{row['층']}</div>",
             unsafe_allow_html=True,
         )
         cols[4].markdown(
-            f"<div style='text-align: center; line-height: 2.5;'>{row['거래유형']}</div>",
+            f"<div style='text-align:center; line-height:2.5; font-size:0.78em;'>{row['거래유형']}</div>",
             unsafe_allow_html=True,
         )
 
         price_str = format_to_korean_currency(row["거래금액(만 원)"])
         if row.get("월세(만 원)", 0) > 0:
-            price_str = f"{price_str} / {row['월세(만 원)']}만원"
+            price_str = f"{price_str}/{row['월세(만 원)']}만"
 
         cols[5].markdown(
-            f"<div style='text-align: center; line-height: 2.5; font-weight: bold; color: #E74C3C;'>{price_str}</div>",
+            f"<div style='text-align:center; line-height:2.5; font-size:0.78em; font-weight:bold; color:#E74C3C;'>{price_str}</div>",
             unsafe_allow_html=True,
         )
-        st.markdown("<hr style='margin: 0px; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
+        st.markdown("<hr style='margin:0; border-top:1px solid #eee;'>", unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------
@@ -784,21 +757,12 @@ def show_detail_page():
     jibun = st.session_state.get("detail_jibun", "")
     is_apt = st.session_state.get("detail_is_apt", True)
 
-    # ✅ 핵심 수정: '·'로 합쳐진 단지명을 다시 분리
-    # merge_split_complexes가 "미륭·미성·삼호3"으로 만든 것을 여기서 다시 분해
-    if "·" in apt_name:
-        related_names = [n.strip() for n in apt_name.split("·")]
-        display_title = apt_name   # 타이틀은 합쳐진 이름 그대로
-    else:
-        related_names = [apt_name]
-        display_title = apt_name
-
     if st.button("⬅️ 이전 목록으로 돌아가기"):
         st.session_state.show_detail = False
         st.rerun()
 
     title_icon = "🏢" if is_apt else "🏘️"
-    st.title(f"{title_icon} {display_title} 상세 분석")
+    st.title(f"{title_icon} {apt_name} 상세 분석")
     st.write("---")
 
     try:
@@ -812,14 +776,10 @@ def show_detail_page():
         st.subheader("📌 단지 기본 정보")
         st.write(f"**📅 준공일:** {build_str}")
 
-        # 분리 단지인 경우 구성 안내
-        if len(related_names) > 1:
-            st.info(f"ℹ️ 통합 단지: **{'·'.join(related_names)}** ({len(related_names)}개 동 합산)")
-
         with st.spinner("📡 건축물대장 스펙 조회 중..."):
             pkng, hh_cnt, vl, bc, road_addr, debug_msg = fetch_building_ledger_v4(lawd_cd, dong_name, jibun)
 
-        # 주소 표시: 도로명 우선, 없으면 지번
+        # 주소: 도로명 우선, 없으면 지번
         display_addr = road_addr if road_addr and road_addr != "0" else f"{sido} {sigungu} {dong_name} {jibun}"
         st.write(f"**📍 주소:** {display_addr}")
 
@@ -873,16 +833,15 @@ def show_detail_page():
                 st.warning("종료일을 정확히 선택해주세요.")
                 st.stop()
 
-            with st.spinner(f"📡 {display_title}의 실제 데이터를 분석 중입니다..."):
+            with st.spinner(f"📡 {apt_name}의 실제 데이터를 분석 중입니다..."):
                 detail_dfs = []
                 df_sale, _ = fetch_real_data(sido, sigungu, lawd_cd, months_to_fetch, "매매", is_apt=True)
                 df_rent, _ = fetch_real_data(sido, sigungu, lawd_cd, months_to_fetch, "전월세", is_apt=True)
 
-                # related_names: '·' 분리로 이미 확보됨 → 바로 필터
                 if df_sale is not None and not df_sale.empty:
-                    detail_dfs.append(df_sale[df_sale["단지명"].isin(related_names)])
+                    detail_dfs.append(df_sale[df_sale["단지명"] == apt_name])
                 if df_rent is not None and not df_rent.empty:
-                    detail_dfs.append(df_rent[df_rent["단지명"].isin(related_names)])
+                    detail_dfs.append(df_rent[df_rent["단지명"] == apt_name])
 
                 if detail_dfs:
                     full_df = pd.concat(detail_dfs, ignore_index=True)
@@ -1200,10 +1159,8 @@ elif page == "🏢 아파트 실거래가":
                     real_df["법정동"].str.contains(selected_apt, na=False)
                 ]
 
-            # ✅ 분리 단지 통합 (미륭+미성+삼호3 → 미륭·미성·삼호3)
-            real_df = merge_split_complexes(real_df)
             real_df = real_df.sort_values(by="계약일", ascending=False).reset_index(drop=True)
-            # ✅ 페이지 번호 초기화
+            st.session_state.res_df = real_df
             st.session_state["apt_list_page"] = 0
 
             if real_df.empty:
@@ -1332,11 +1289,8 @@ elif page == "🏘️ 비아파트 (오피스텔/빌라 등)":
                     real_df["법정동"].str.contains(selected_nonapt, na=False)
                 ]
 
-            # ✅ 분리 단지 통합
-            real_df = merge_split_complexes(real_df)
             real_df = real_df.sort_values(by="계약일", ascending=False).reset_index(drop=True)
             st.session_state.res_nonapt_df = real_df
-            # ✅ 페이지 번호 초기화
             st.session_state["nonapt_list_page"] = 0
 
             if real_df.empty:
