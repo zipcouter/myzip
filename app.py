@@ -309,7 +309,7 @@ def fetch_building_ledger_v4(sigungu_cd, dong_name, jibun):
         f"serviceKey={MOLIT_API_KEY}"
         f"&sigunguCd={sigungu_cd}&bjdongCd={bjdong_cd}"
         f"&platGbCd={plat_gb_cd}&bun={bun}&ji={ji}"
-        f"&numOfRows=10&_type=xml"
+        f"&numOfRows=50&_type=xml"   # 50개로 확대 (같은 지번에 여러 건물 대응)
     )
     urls = [
         f"https://apis.data.go.kr/1613000/BldRgstHubService/getBrRecapTitleInfo?{base_params}",
@@ -333,7 +333,7 @@ def fetch_building_ledger_v4(sigungu_cd, dong_name, jibun):
                 rm = root.findtext(".//resultMsg") or root.findtext(".//returnReasonMsg") or rc
                 continue  # 다음 URL 시도
 
-            # ── STEP 6. item 추출 → 소문자 태그 dict ─────────────
+            # ── STEP 6. item 추출 → 공동주택 우선 선택 ──────────
             xml_items = root.findall(".//item")
             if not xml_items:
                 return None, None, None, None, (
@@ -341,12 +341,47 @@ def fetch_building_ledger_v4(sigungu_cd, dong_name, jibun):
                     f"platGb={plat_gb_cd}, bun={bun}, ji={ji})\n\n{raw_xml[:1000]}"
                 )
 
-            # 첫 번째 item 기준으로 소문자 dict 구성
-            tag_dict = {}
-            for child in xml_items[0].iter():
-                k = child.tag.split("}")[-1].strip().lower()
-                v = (child.text or "").strip()
-                tag_dict[k] = v   # 빈 값 포함 모두 저장
+            # 공동주택 용도코드 목록
+            RESIDENTIAL_CODES = {
+                "02000",  # 공동주택
+                "02100",  # 아파트
+                "02200",  # 연립주택
+                "02300",  # 다세대주택
+                "02400",  # 기숙사
+            }
+
+            def item_to_dict(item_el):
+                d = {}
+                for child in item_el.iter():
+                    k = child.tag.split("}")[-1].strip().lower()
+                    v = (child.text or "").strip()
+                    d[k] = v
+                return d
+
+            # 모든 item을 dict로 변환
+            all_item_dicts = [item_to_dict(it) for it in xml_items]
+
+            # 공동주택인 item 우선 선택, 없으면 첫 번째 사용
+            tag_dict = None
+            for d in all_item_dicts:
+                purps_cd = d.get("mainpurpscd", "")
+                purps_nm = d.get("mainpurpscdnm", "")
+                if purps_cd in RESIDENTIAL_CODES or "공동주택" in purps_nm or "아파트" in purps_nm:
+                    tag_dict = d
+                    break
+
+            if tag_dict is None:
+                # 공동주택 없으면: platArea가 0이 아닌 item 우선
+                for d in all_item_dicts:
+                    try:
+                        if float(d.get("platarea", "0") or "0") > 0:
+                            tag_dict = d
+                            break
+                    except:
+                        pass
+
+            if tag_dict is None:
+                tag_dict = all_item_dicts[0]  # 최후 fallback
 
             def g(key):
                 """태그값 조회, 없으면 '0'"""
@@ -404,11 +439,12 @@ def fetch_building_ledger_v4(sigungu_cd, dong_name, jibun):
             )
             debug_msg = (
                 f"[v4 파싱 결과]\n"
+                f"  선택건물  : {g('mainpurpscdnm')} (총 {len(all_item_dicts)}개 건물 중 선택)\n"
                 f"  세대수    : {tot_hh}  (hhldCnt={g('hhldcnt')}, hoCnt={g('hocnt')})\n"
                 f"  주차대수  : {tot_pkng}  (totPkngCnt={g('totpkngcnt')})\n"
                 f"  용적률    : {vl_str}  (vlRat={g('vlrat')}, estm={vl_estm}, plat={plat_area})\n"
                 f"  건폐율    : {bc_str}  (bcRat={g('bcrat')}, arch={arch_area})\n\n"
-                f"[item[0] 전체 태그]\n{all_tag_lines}"
+                f"[선택된 item 전체 태그]\n{all_tag_lines}"
             )
 
             return tot_pkng, tot_hh, vl_str, bc_str, debug_msg
