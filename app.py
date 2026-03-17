@@ -665,75 +665,53 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
     end_idx = min(start_idx + ITEMS_PER_PAGE, total)
     display_df = df.iloc[start_idx:end_idx].reset_index(drop=True)
 
-    st.markdown("""
-    <style>
-    [data-testid="stHorizontalBlock"] { flex-wrap: nowrap !important; }
-    [data-testid="column"] { min-width: 0 !important; flex-shrink: 1 !important; }
-    [data-testid="column"] p,
-    [data-testid="column"] div { font-size: 0.85em !important; white-space: nowrap; }
-    [data-testid="stButton"] > button {
-        font-size: 0.85em !important;
-        padding: 2px 4px !important;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # 4컬럼: 계약일 | 단지명 | 면적/층 | 실거래가
-    col_ratios = [1.2, 2.4, 1.6, 1.8]
-    headers = ["계약일", "단지명 👆", "면적/층", "실거래가"]
-
-    h_cols = st.columns(col_ratios)
-    for i, header in enumerate(headers):
-        h_cols[i].markdown(
-            f"<div style='text-align:center; color:gray; font-size:0.85em;'><b>{header}</b></div>",
-            unsafe_allow_html=True,
-        )
-    st.markdown("<hr style='margin:2px 0 4px 0; border-top:2px solid #ddd;'>", unsafe_allow_html=True)
-
-    for idx, row in display_df.iterrows():
-        cols = st.columns(col_ratios)
-
-        cols[0].markdown(
-            f"<div style='text-align:center; font-size:0.85em; padding:5px 0;'>{row['계약일']}</div>",
-            unsafe_allow_html=True,
-        )
-
-        btn_key = f"{'apt' if is_apt else 'non'}_btn_{page_key}_{start_idx + idx}"
-        if cols[1].button(row["단지명"], key=btn_key, type="tertiary", use_container_width=True):
-            st.session_state.show_detail = True
-            st.session_state.detail_is_apt = is_apt
-            st.session_state.detail_bldg_type = st.session_state.get("nonapt_bldg_type", "오피스텔")
-            st.session_state.detail_sido = row.get("시도", "")
-            st.session_state.detail_sigungu = row.get("시군구", "")
-            st.session_state.detail_lawd_cd = row.get("법정동코드", "")
-            st.session_state.detail_apt_name = row["단지명"]
-            st.session_state.detail_dong = row.get("법정동", "")
-            st.session_state.detail_build_year = row.get("건축년도", "0")
-            st.session_state.detail_jibun = row.get("지번", "")
-            st.session_state.detail_full_df = pd.DataFrame()
-            st.session_state.detail_searched = False
-            st.rerun()
-
-        # 면적 + 층 합치기
-        area = row.get("전용면적", "")
-        floor = row.get("층", "")
-        cols[2].markdown(
-            f"<div style='text-align:center; font-size:0.85em; padding:5px 0;'>{area}<br>{floor}</div>",
-            unsafe_allow_html=True,
-        )
-
-        price_str = format_to_korean_currency(row["거래금액(만 원)"])
+    # 표시용 컬럼 가공
+    view = display_df.copy()
+    def make_price(row):
+        p = format_to_korean_currency(row["거래금액(만 원)"])
         if row.get("월세(만 원)", 0) > 0:
-            price_str = f"{price_str}/{row['월세(만 원)']}만"
+            return f"{p} / {row['월세(만 원)']}만원"
+        return p
 
-        cols[3].markdown(
-            f"<div style='text-align:center; font-size:0.85em; padding:5px 0; font-weight:bold; color:#E74C3C;'>{price_str}</div>",
-            unsafe_allow_html=True,
-        )
-        st.markdown("<hr style='margin:0; border-top:1px solid #eee;'>", unsafe_allow_html=True)
+    view["실거래가"] = view.apply(make_price, axis=1)
+    view["면적/층"] = view["전용면적"].astype(str) + "  " + view["층"].astype(str)
+    show_df = view[["계약일", "단지명", "면적/층", "거래유형", "실거래가"]]
+
+    st.caption("👆 행을 클릭하면 단지 상세 정보로 이동합니다")
+
+    event = st.dataframe(
+        show_df,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        column_config={
+            "계약일":  st.column_config.TextColumn("계약일",  width="small"),
+            "단지명":  st.column_config.TextColumn("단지명",  width="medium"),
+            "면적/층": st.column_config.TextColumn("면적/층", width="small"),
+            "거래유형":st.column_config.TextColumn("거래유형",width="small"),
+            "실거래가":st.column_config.TextColumn("실거래가",width="medium"),
+        },
+    )
+
+    # 행 선택 시 상세 페이지로 이동
+    if event.selection and event.selection.rows:
+        selected_idx = event.selection.rows[0]
+        row = display_df.iloc[selected_idx]
+
+        st.session_state.show_detail = True
+        st.session_state.detail_is_apt = is_apt
+        st.session_state.detail_bldg_type = st.session_state.get("nonapt_bldg_type", "오피스텔")
+        st.session_state.detail_sido = row.get("시도", "")
+        st.session_state.detail_sigungu = row.get("시군구", "")
+        st.session_state.detail_lawd_cd = row.get("법정동코드", "")
+        st.session_state.detail_apt_name = row["단지명"]
+        st.session_state.detail_dong = row.get("법정동", "")
+        st.session_state.detail_build_year = row.get("건축년도", "0")
+        st.session_state.detail_jibun = row.get("지번", "")
+        st.session_state.detail_full_df = pd.DataFrame()
+        st.session_state.detail_searched = False
+        st.rerun()
 
 
 # ---------------------------------------------------------
