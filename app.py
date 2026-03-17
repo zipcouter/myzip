@@ -642,34 +642,13 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
         st.session_state[page_key] = 0
         current_page = 0
 
-    # 페이지 컨트롤
-    if total_pages > 1:
-        pg_col1, pg_col2, pg_col3 = st.columns([1, 2, 1])
-        with pg_col1:
-            if st.button("◀ 이전", key=f"{page_key}_prev", disabled=(current_page == 0)):
-                st.session_state[page_key] -= 1
-                st.rerun()
-        with pg_col2:
-            st.markdown(
-                f"<div style='text-align:center; padding-top:0.5em;'>"
-                f"{current_page + 1} / {total_pages} 페이지 &nbsp;|&nbsp; 총 {total:,}건</div>",
-                unsafe_allow_html=True,
-            )
-        with pg_col3:
-            if st.button("다음 ▶", key=f"{page_key}_next", disabled=(current_page >= total_pages - 1)):
-                st.session_state[page_key] += 1
-                st.rerun()
-
-    start_idx = current_page * ITEMS_PER_PAGE
-    end_idx = min(start_idx + ITEMS_PER_PAGE, total)
-
-    # ── 정렬 옵션 (리스트 상단) ───────────────────────────────────
+    # ── 정렬 버튼 (상단) ─────────────────────────────────────────
     sort_key = f"{page_key}_sort"
     if sort_key not in st.session_state:
         st.session_state[sort_key] = "최신순"
 
-    s_col1, s_col2, s_col3 = st.columns(3)
-    for col, label in zip([s_col1, s_col2, s_col3], ["최신순", "고가순", "저가순"]):
+    s1, s2, s3 = st.columns(3)
+    for col, label in zip([s1, s2, s3], ["최신순", "고가순", "저가순"]):
         is_active = st.session_state[sort_key] == label
         if col.button(
             f"{'✅ ' if is_active else ''}{label}",
@@ -678,8 +657,11 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
             type="primary" if is_active else "secondary",
         ):
             st.session_state[sort_key] = label
-            st.session_state[page_key] = 0  # 정렬 변경 시 첫 페이지로
+            st.session_state[page_key] = 0
             st.rerun()
+
+    start_idx = current_page * ITEMS_PER_PAGE
+    end_idx = min(start_idx + ITEMS_PER_PAGE, total)
 
     # 정렬 적용
     sort_mode = st.session_state[sort_key]
@@ -687,7 +669,7 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
         sorted_df = df.sort_values("계약일", ascending=False).reset_index(drop=True)
     elif sort_mode == "고가순":
         sorted_df = df.sort_values("거래금액(만 원)", ascending=False).reset_index(drop=True)
-    else:  # 저가순
+    else:
         sorted_df = df.sort_values("거래금액(만 원)", ascending=True).reset_index(drop=True)
 
     display_df = sorted_df.iloc[start_idx:end_idx].reset_index(drop=True)
@@ -751,6 +733,22 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
             st.session_state.detail_jibun = row.get("지번", "")
             st.session_state.detail_full_df = pd.DataFrame()
             st.session_state.detail_searched = False
+            st.rerun()
+
+    # ── 페이지 버튼 (리스트 하단) ────────────────────────────────
+    if total_pages > 1:
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+        p1, p2, p3 = st.columns([1, 2, 1])
+        if p1.button("◀ 이전", key=f"{page_key}_prev", disabled=(current_page == 0), use_container_width=True):
+            st.session_state[page_key] -= 1
+            st.rerun()
+        p2.markdown(
+            f"<div style='text-align:center; padding-top:0.4em; font-size:0.9em;'>"
+            f"{current_page + 1} / {total_pages} 페이지 &nbsp;|&nbsp; 총 {total:,}건</div>",
+            unsafe_allow_html=True,
+        )
+        if p3.button("다음 ▶", key=f"{page_key}_next", disabled=(current_page >= total_pages - 1), use_container_width=True):
+            st.session_state[page_key] += 1
             st.rerun()
 
 
