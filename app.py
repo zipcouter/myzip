@@ -116,7 +116,7 @@ def get_lat_lng_free(sido, sigungu, dong, apt_name):
 # ---------------------------------------------------------
 # 🌟 유틸리티 함수들
 # ---------------------------------------------------------
-PERIOD_OPTIONS = ["오늘", "이번 달", "최근 3개월", "최근 6개월", "최근 1년", "직접 설정"]
+PERIOD_OPTIONS = ["오늘", "최근 7일", "최근 1개월", "최근 3개월", "최근 6개월", "최근 1년", "직접 설정"]
 
 
 def format_to_korean_currency(price_manwon):
@@ -200,20 +200,25 @@ def resolve_months(period, custom_dates=None):
         two_days_ago = today - datetime.timedelta(days=2)
         months = list({today.strftime("%Y%m"), two_days_ago.strftime("%Y%m")})
         return months, two_days_ago, today
+    elif period == "최근 7일":
+        today = datetime.date.today()
+        seven_ago = today - datetime.timedelta(days=7)
+        months = list({today.strftime("%Y%m"), seven_ago.strftime("%Y%m")})
+        return months, seven_ago, today
     elif period == "직접 설정":
         if custom_dates and len(custom_dates) == 2:
             start_date, end_date = custom_dates
             return get_months_from_dates(start_date, end_date), start_date, end_date
         return None, None, None
     else:
-        n_map = {"최근 1년": 12, "최근 6개월": 6, "최근 3개월": 3, "이번 달": 1}
+        n_map = {"최근 1년": 12, "최근 6개월": 6, "최근 3개월": 3, "최근 1개월": 1}
         n = n_map.get(period, 1)
         return get_recent_months(n), None, None
 
 
 def apply_date_filter(df, period, start_date, end_date):
     """날짜 필터 적용"""
-    if period == "오늘":
+    if period in ["오늘", "최근 7일"]:
         if df.empty or start_date is None:
             return df
         return df[
