@@ -756,6 +756,14 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
 # 🔍 상세 페이지
 # ---------------------------------------------------------
 def show_detail_page():
+    # 페이지 진입 시 최상단으로 스크롤
+    st.markdown(
+        "<script>window.scrollTo(0, 0);</script>",
+        unsafe_allow_html=True,
+    )
+    # Streamlit에서 JS가 바로 안 될 경우 대비 anchor 사용
+    st.markdown("<div id='top'></div>", unsafe_allow_html=True)
+
     apt_name = st.session_state.get("detail_apt_name", "이름없음")
     dong_name = st.session_state.get("detail_dong", "")
     build_year = st.session_state.get("detail_build_year", "0")
@@ -770,7 +778,7 @@ def show_detail_page():
         st.rerun()
 
     title_icon = "🏢" if is_apt else "🏘️"
-    st.title(f"{title_icon} {apt_name} 상세 분석")
+    st.markdown(f"### {title_icon} {apt_name} 상세 분석")
     st.write("---")
 
     try:
