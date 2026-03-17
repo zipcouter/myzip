@@ -784,8 +784,7 @@ def show_detail_page():
         st.subheader("📌 단지 기본 정보")
         st.write(f"**📅 준공일:** {build_str}")
 
-        with st.spinner("📡 건축물대장 스펙 조회 중..."):
-            pkng, hh_cnt, vl, bc, road_addr, debug_msg = fetch_building_ledger_v4(lawd_cd, dong_name, jibun)
+        pkng, hh_cnt, vl, bc, road_addr, debug_msg = fetch_building_ledger_v4(lawd_cd, dong_name, jibun)
 
         # 주소: 도로명 우선, 없으면 지번
         display_addr = road_addr if road_addr and road_addr != "0" else f"{sido} {sigungu} {dong_name} {jibun}"
@@ -799,23 +798,16 @@ def show_detail_page():
             else:
                 st.write(f"**🚗 세대당 주차대수:** 계산 불가 (총 {pkng}대)")
             st.write(f"**🏢 용적률:** {vl} / **🏗️ 건폐율:** {bc}")
-            # 디버그: SUCCESS여도 실제 태그 확인 가능
-            with st.expander("🔧 건축물대장 API 디버그 (개발자용)", expanded=False):
-                st.code(debug_msg, language="text")
         else:
             st.write("**🏘️ 세대수:** 조회 불가")
             st.write("**🚗 세대당 주차대수:** 조회 불가")
             st.write("**🏢 용적률:** 조회 불가 / **🏗️ 건폐율:** 조회 불가")
-            with st.expander("🚨 건축물대장 오류 상세 (클릭하여 확인)", expanded=True):
-                st.code(debug_msg, language="text")
 
     with col_map:
         lat, lng = get_lat_lng_free(sido, sigungu, dong_name, apt_name)
         if lat and lng:
             map_data = pd.DataFrame({"lat": [lat], "lon": [lng]})
             st.map(map_data, zoom=15, height=200)
-        else:
-            st.info("🗺️ 주소 정보가 부족하여 지도에 위치를 표시할 수 없습니다.")
 
     st.write("---")
 
@@ -841,25 +833,24 @@ def show_detail_page():
                 st.warning("종료일을 정확히 선택해주세요.")
                 st.stop()
 
-            with st.spinner(f"📡 {apt_name}의 실제 데이터를 분석 중입니다..."):
-                detail_dfs = []
-                df_sale, _ = fetch_real_data(sido, sigungu, lawd_cd, months_to_fetch, "매매", is_apt=True)
-                df_rent, _ = fetch_real_data(sido, sigungu, lawd_cd, months_to_fetch, "전월세", is_apt=True)
+            detail_dfs = []
+            df_sale, _ = fetch_real_data(sido, sigungu, lawd_cd, months_to_fetch, "매매", is_apt=True)
+            df_rent, _ = fetch_real_data(sido, sigungu, lawd_cd, months_to_fetch, "전월세", is_apt=True)
 
-                if df_sale is not None and not df_sale.empty:
-                    detail_dfs.append(df_sale[df_sale["단지명"] == apt_name])
-                if df_rent is not None and not df_rent.empty:
-                    detail_dfs.append(df_rent[df_rent["단지명"] == apt_name])
+            if df_sale is not None and not df_sale.empty:
+                detail_dfs.append(df_sale[df_sale["단지명"] == apt_name])
+            if df_rent is not None and not df_rent.empty:
+                detail_dfs.append(df_rent[df_rent["단지명"] == apt_name])
 
-                if detail_dfs:
-                    full_df = pd.concat(detail_dfs, ignore_index=True)
-                    full_df = apply_date_filter(full_df, chart_period, start_date, end_date)
-                    st.session_state.detail_full_df = full_df
-                else:
-                    st.session_state.detail_full_df = pd.DataFrame()
+            if detail_dfs:
+                full_df = pd.concat(detail_dfs, ignore_index=True)
+                full_df = apply_date_filter(full_df, chart_period, start_date, end_date)
+                st.session_state.detail_full_df = full_df
+            else:
+                st.session_state.detail_full_df = pd.DataFrame()
 
-                st.session_state.detail_chart_view = chart_view_type
-                st.session_state.detail_searched = True
+            st.session_state.detail_chart_view = chart_view_type
+            st.session_state.detail_searched = True
 
         if st.session_state.get("detail_searched", False):
             detail_full_df = st.session_state.get("detail_full_df", pd.DataFrame())
@@ -1015,24 +1006,22 @@ def show_detail_page():
             api_target = "전월세" if trade_type_det in ["전세", "월세"] else "매매"
             bldg_type = st.session_state.get("detail_bldg_type", "오피스텔")
 
-            with st.spinner(f"📡 {apt_name}의 데이터를 연동 중입니다..."):
-                df_detail, msg = fetch_real_data(
-                    sido, sigungu, lawd_cd, months_to_fetch, api_target,
-                    is_apt=False, bldg_type=bldg_type,
-                )
+            df_detail, msg = fetch_real_data(
+                sido, sigungu, lawd_cd, months_to_fetch, api_target,
+                is_apt=False, bldg_type=bldg_type,
+            )
 
-                if df_detail is not None and not df_detail.empty:
-                    # ✅ 이슈1,2: 분리 단지 통합
-                    rel_names, _ = find_related_apt_names(df_detail, apt_name, jibun)
-                    df_detail = df_detail[df_detail["단지명"].isin(rel_names)]
-                    df_detail = df_detail[df_detail["거래유형"] == trade_type_det]
-                    df_detail = apply_date_filter(df_detail, period_det, start_date, end_date)
-                    df_detail = apply_area_filter(df_detail, pyeong_type_det, is_apt=False)
-                    st.session_state.detail_full_df = df_detail
-                else:
-                    st.session_state.detail_full_df = pd.DataFrame()
+            if df_detail is not None and not df_detail.empty:
+                rel_names, _ = find_related_apt_names(df_detail, apt_name, jibun)
+                df_detail = df_detail[df_detail["단지명"].isin(rel_names)]
+                df_detail = df_detail[df_detail["거래유형"] == trade_type_det]
+                df_detail = apply_date_filter(df_detail, period_det, start_date, end_date)
+                df_detail = apply_area_filter(df_detail, pyeong_type_det, is_apt=False)
+                st.session_state.detail_full_df = df_detail
+            else:
+                st.session_state.detail_full_df = pd.DataFrame()
 
-                st.session_state.detail_searched = True
+            st.session_state.detail_searched = True
 
         if st.session_state.get("detail_searched", False):
             detail_full_df = st.session_state.get("detail_full_df", pd.DataFrame())
@@ -1147,10 +1136,9 @@ elif page == "🏢 아파트 실거래가":
 
         api_target = "전월세" if trade_type in ["전세", "월세"] else "매매"
 
-        with st.spinner("📡 국토교통부 서버에서 데이터를 가져오는 중입니다..."):
-            result_dfs, error_msgs = fetch_all_targets(
-                targets, months_to_fetch, api_target, sido_name, is_apt=True
-            )
+        result_dfs, error_msgs = fetch_all_targets(
+            targets, months_to_fetch, api_target, sido_name, is_apt=True
+        )
 
         if result_dfs:
             real_df = pd.concat(result_dfs, ignore_index=True)
@@ -1277,10 +1265,9 @@ elif page == "🏘️ 비아파트 (오피스텔/빌라 등)":
 
         api_target = "전월세" if trade_type in ["전세", "월세"] else "매매"
 
-        with st.spinner(f"📡 국토교통부 서버에서 {bldg_type} 데이터를 가져오는 중입니다..."):
-            result_dfs, error_msgs = fetch_all_targets(
-                targets, months_to_fetch, api_target, sido_name, is_apt=False, bldg_type=bldg_type
-            )
+        result_dfs, error_msgs = fetch_all_targets(
+            targets, months_to_fetch, api_target, sido_name, is_apt=False, bldg_type=bldg_type
+        )
 
         if result_dfs:
             real_df = pd.concat(result_dfs, ignore_index=True)
