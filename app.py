@@ -433,13 +433,17 @@ def fetch_building_ledger_v4(sigungu_cd, dong_name, jibun):
             vl_str = f"{vl_rat}%" if vl_rat > 0 else "정보없음"
             bc_str = f"{bc_rat}%" if bc_rat > 0 else "정보없음"
 
-            # ── STEP 10. 디버그 메시지 ────────────────────────────
+            # ── STEP 10. 도로명 주소 추출 ────────────────────────
+            road_addr = g("newplatplc")   # 예: 서울특별시 노원구 마들로 111 (월계동)
+
+            # ── STEP 11. 디버그 메시지 ────────────────────────────
             all_tag_lines = "\n".join(
                 f"  {k} = {v}" for k, v in tag_dict.items()
             )
             debug_msg = (
                 f"[v4 파싱 결과]\n"
                 f"  선택건물  : {g('mainpurpscdnm')} (총 {len(all_item_dicts)}개 건물 중 선택)\n"
+                f"  도로명주소: {road_addr}\n"
                 f"  세대수    : {tot_hh}  (hhldCnt={g('hhldcnt')}, hoCnt={g('hocnt')})\n"
                 f"  주차대수  : {tot_pkng}  (totPkngCnt={g('totpkngcnt')})\n"
                 f"  용적률    : {vl_str}  (vlRat={g('vlrat')}, estm={vl_estm}, plat={plat_area})\n"
@@ -447,14 +451,15 @@ def fetch_building_ledger_v4(sigungu_cd, dong_name, jibun):
                 f"[선택된 item 전체 태그]\n{all_tag_lines}"
             )
 
-            return tot_pkng, tot_hh, vl_str, bc_str, debug_msg
+            # 반환: (주차, 세대수, 용적률, 건폐율, 도로명주소, 디버그)
+            return tot_pkng, tot_hh, vl_str, bc_str, road_addr, debug_msg
 
         except ET.ParseError as e:
-            return None, None, None, None, f"XML 파싱 오류: {e}\n\n{raw_xml[:500]}"
+            return None, None, None, None, "", f"XML 파싱 오류: {e}\n\n{raw_xml[:500]}"
         except Exception as e:
-            continue  # 다음 URL 시도
+            continue
 
-    return None, None, None, None, (
+    return None, None, None, None, "", (
         f"API 호출 실패 (sigungu={sigungu_cd}, bjdong={bjdong_cd}, bun={bun}, ji={ji})\n\n"
         f"{raw_xml[:800]}"
     )
@@ -763,7 +768,6 @@ def show_detail_page():
     col_info, col_map = st.columns([1, 1])
     with col_info:
         st.subheader("📌 단지 기본 정보")
-        st.write(f"**📍 법정동 주소:** {sido} {sigungu} {dong_name} {jibun}")
         st.write(f"**📅 준공일:** {build_str}")
 
         # ✅ 이슈1,2,3: 분리 단지 조회를 위해 먼저 이번 달 데이터로 관련 단지 파악
@@ -788,7 +792,11 @@ def show_detail_page():
             )
 
         with st.spinner("📡 건축물대장 스펙 조회 중..."):
-            pkng, hh_cnt, vl, bc, debug_msg = fetch_building_ledger_v4(lawd_cd, dong_name, jibun)
+            pkng, hh_cnt, vl, bc, road_addr, debug_msg = fetch_building_ledger_v4(lawd_cd, dong_name, jibun)
+
+        # 주소 표시: 도로명 우선, 없으면 지번
+        display_addr = road_addr if road_addr and road_addr != "0" else f"{sido} {sigungu} {dong_name} {jibun}"
+        st.write(f"**📍 주소:** {display_addr}")
 
         if pkng is not None:
             st.write(f"**🏘️ 세대수:** {hh_cnt}세대")
