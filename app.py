@@ -143,7 +143,6 @@ def format_to_korean_currency(price_manwon):
 
 
 def get_xml_text(item, tags, default=""):
-    # ✅ FIX 9: 태그 매핑 딕셔너리로 개선
     lower_tags = {t.strip().lower() for t in tags}
     for child in item.iter():
         tag_name = child.tag.split("}")[-1].strip().lower()
@@ -151,6 +150,34 @@ def get_xml_text(item, tags, default=""):
             if child.text is not None and child.text.strip():
                 return child.text.strip()
     return default
+
+
+# ✅ 이슈1,2,3 수정: 분리 등록 단지 통합 처리 함수
+def find_related_apt_names(df, apt_name, jibun):
+    """
+    국토부 API는 대단지를 별개 건물로 분리 등록함.
+    예) 미륭미성삼호3차 → "미륭", "미성", "삼호3차" 개별 반환
+    예) 중계그린아파트 → "중계그린1단지", "중계그린2단지" 개별 반환
+
+    같은 지번(jibun)에 속한 단지명을 모두 찾아 통합.
+    지번이 없으면 apt_name만 반환.
+    """
+    if df.empty:
+        return [apt_name], apt_name
+
+    related_names = [apt_name]
+    representative = apt_name  # 건축물대장 조회에 쓸 대표 지번 단지명
+
+    if jibun and str(jibun).strip():
+        # 같은 지번의 모든 단지명 수집
+        same_jibun = df[df["지번"] == str(jibun).strip()]
+        if not same_jibun.empty:
+            related_names = same_jibun["단지명"].dropna().unique().tolist()
+            # 세대수가 가장 많은 (거래가 가장 많은) 단지를 대표로 사용
+            counts = same_jibun["단지명"].value_counts()
+            representative = counts.index[0] if not counts.empty else apt_name
+
+    return related_names, representative
 
 
 def get_recent_months(n):
@@ -703,6 +730,27 @@ def show_detail_page():
         st.write(f"**📍 법정동 주소:** {sido} {sigungu} {dong_name} {jibun}")
         st.write(f"**📅 준공일:** {build_str}")
 
+        # ✅ 이슈1,2,3: 분리 단지 조회를 위해 먼저 이번 달 데이터로 관련 단지 파악
+        _ref_df, _ = fetch_real_data(sido, sigungu, lawd_cd,
+                                     [datetime.date.today().strftime("%Y%m")],
+                                     "매매", is_apt=is_apt)
+        if _ref_df is None or _ref_df.empty:
+            _ref_df, _ = fetch_real_data(sido, sigungu, lawd_cd,
+                                         get_recent_months(3),
+                                         "매매", is_apt=is_apt)
+
+        related_names, rep_name = find_related_apt_names(
+            _ref_df if _ref_df is not None else pd.DataFrame(),
+            apt_name, jibun
+        )
+
+        # 분리 단지인 경우 안내
+        if len(related_names) > 1:
+            st.info(
+                f"ℹ️ 이 단지는 국토부에 **{len(related_names)}개**로 분리 등록되어 있습니다.\n\n"
+                f"통합 표시: **{' · '.join(related_names)}**"
+            )
+
         with st.spinner("📡 건축물대장 스펙 조회 중..."):
             pkng, hh_cnt, vl, bc, debug_msg = fetch_building_ledger_v4(lawd_cd, dong_name, jibun)
 
@@ -759,12 +807,20 @@ def show_detail_page():
             with st.spinner(f"📡 {apt_name}의 실제 데이터를 분석 중입니다..."):
                 detail_dfs = []
                 df_sale, _ = fetch_real_data(sido, sigungu, lawd_cd, months_to_fetch, "매매", is_apt=True)
-                if df_sale is not None and not df_sale.empty:
-                    detail_dfs.append(df_sale[df_sale["단지명"] == apt_name])
-
                 df_rent, _ = fetch_real_data(sido, sigungu, lawd_cd, months_to_fetch, "전월세", is_apt=True)
+
+                # ✅ 이슈1,2: 분리 단지 통합 — 같은 지번의 모든 관련 단지 포함
+                all_raw = pd.concat(
+                    [df for df in [df_sale, df_rent] if df is not None and not df.empty],
+                    ignore_index=True
+                ) if (df_sale is not None or df_rent is not None) else pd.DataFrame()
+
+                rel_names, _ = find_related_apt_names(all_raw, apt_name, jibun)
+
+                if df_sale is not None and not df_sale.empty:
+                    detail_dfs.append(df_sale[df_sale["단지명"].isin(rel_names)])
                 if df_rent is not None and not df_rent.empty:
-                    detail_dfs.append(df_rent[df_rent["단지명"] == apt_name])
+                    detail_dfs.append(df_rent[df_rent["단지명"].isin(rel_names)])
 
                 if detail_dfs:
                     full_df = pd.concat(detail_dfs, ignore_index=True)
@@ -937,7 +993,9 @@ def show_detail_page():
                 )
 
                 if df_detail is not None and not df_detail.empty:
-                    df_detail = df_detail[df_detail["단지명"] == apt_name]
+                    # ✅ 이슈1,2: 분리 단지 통합
+                    rel_names, _ = find_related_apt_names(df_detail, apt_name, jibun)
+                    df_detail = df_detail[df_detail["단지명"].isin(rel_names)]
                     df_detail = df_detail[df_detail["거래유형"] == trade_type_det]
                     df_detail = apply_date_filter(df_detail, period_det, start_date, end_date)
                     df_detail = apply_area_filter(df_detail, pyeong_type_det, is_apt=False)
@@ -1072,7 +1130,8 @@ elif page == "🏢 아파트 실거래가":
             real_df = apply_area_filter(real_df, pyeong_type, is_apt=True)
 
             if dong_name not in ["전체 (구 단위)", "전체 (시/도 단위)"]:
-                real_df = real_df[real_df["법정동"].str.contains(dong_name, na=False)]
+                # ✅ 이슈4 수정: 정확 매칭 (신월계동이 월계동에 포함되는 오류 방지)
+                real_df = real_df[real_df["법정동"] == dong_name]
             if selected_apt.strip():
                 real_df = real_df[
                     real_df["단지명"].str.contains(selected_apt, na=False) |
@@ -1080,7 +1139,6 @@ elif page == "🏢 아파트 실거래가":
                 ]
 
             real_df = real_df.sort_values(by="계약일", ascending=False).reset_index(drop=True)
-            st.session_state.res_df = real_df
             # ✅ 페이지 번호 초기화
             st.session_state["apt_list_page"] = 0
 
@@ -1202,7 +1260,8 @@ elif page == "🏘️ 비아파트 (오피스텔/빌라 등)":
             real_df = apply_area_filter(real_df, pyeong_type, is_apt=False)
 
             if dong_name not in ["전체 (구 단위)", "전체 (시/도 단위)"]:
-                real_df = real_df[real_df["법정동"].str.contains(dong_name, na=False)]
+                # ✅ 이슈4 수정: 정확 매칭
+                real_df = real_df[real_df["법정동"] == dong_name]
             if selected_nonapt.strip():
                 real_df = real_df[
                     real_df["단지명"].str.contains(selected_nonapt, na=False) |
