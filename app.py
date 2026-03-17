@@ -756,13 +756,9 @@ def render_clickable_list(df, is_apt=True, page_key="list_page"):
 # 🔍 상세 페이지
 # ---------------------------------------------------------
 def show_detail_page():
-    # 페이지 진입 시 최상단으로 스크롤
-    st.markdown(
-        "<script>window.scrollTo(0, 0);</script>",
-        unsafe_allow_html=True,
-    )
-    # Streamlit에서 JS가 바로 안 될 경우 대비 anchor 사용
-    st.markdown("<div id='top'></div>", unsafe_allow_html=True)
+    # 최상단 스크롤 (components.v1.html 사용 - Streamlit에서 JS 실행 가능한 유일한 방법)
+    import streamlit.components.v1 as components
+    components.html("<script>window.parent.document.querySelector('section.main').scrollTo(0, 0);</script>", height=0)
 
     apt_name = st.session_state.get("detail_apt_name", "이름없음")
     dong_name = st.session_state.get("detail_dong", "")
