@@ -25,7 +25,8 @@ if not all([API_KEY, SUPABASE_URL, SUPABASE_KEY]):
     sys.exit(1)
 
 supabase  = create_client(SUPABASE_URL, SUPABASE_KEY)
-today     = datetime.date.today()
+import pytz
+today = datetime.datetime.now(pytz.timezone('Asia/Seoul')).date()
 today_str = today.isoformat()
 cur_ym    = today.strftime('%Y%m')
 prev_ym   = (today.replace(day=1) - datetime.timedelta(days=1)).strftime('%Y%m')
