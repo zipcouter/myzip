@@ -20,7 +20,7 @@ jobs:
           python-version: '3.11'
 
       - name: 패키지 설치
-        run: pip install requests supabase
+        run: pip install requests supabase pytz
 
       - name: 데이터 수집 실행
         env:
