@@ -25,6 +25,81 @@ try:
 except Exception:
     MOLIT_API_KEY = os.environ.get("MOLIT_API_KEY", _HARDCODED_KEY)
 
+# ── Supabase 연동 (오늘 신고일 조회용) ────────────────────────────────────────
+try:
+    from supabase import create_client as _sb_create
+    # Streamlit Cloud Secrets 우선, 없으면 환경변수, 없으면 하드코딩
+    try:
+        _SB_URL = st.secrets["SUPABASE_URL"]
+    except Exception:
+        _SB_URL = os.environ.get("SUPABASE_URL", "https://gsibdksdphtmlevfenad.supabase.co")
+    try:
+        _SB_KEY = st.secrets["SUPABASE_KEY"]
+    except Exception:
+        _SB_KEY = os.environ.get("SUPABASE_KEY",
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+            "eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzaWJka3NkcGh0bWxldmZlbmFkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4MzM4MzUsImV4cCI6MjA4OTQwOTgzNX0."
+            "90Tes6JMgbp-cAkjSjl1Jv6SvQbdYMWQCBwnVw6CrLE")
+    _supabase = _sb_create(_SB_URL, _SB_KEY)
+    SUPABASE_AVAILABLE = True
+except Exception:
+    SUPABASE_AVAILABLE = False
+
+def _kst_today():
+    try:
+        import pytz
+        return datetime.datetime.now(pytz.timezone("Asia/Seoul")).date().isoformat()
+    except Exception:
+        return datetime.date.today().isoformat()
+
+@st.cache_data(show_spinner=False, ttl=300)
+def fetch_today_from_supabase(lawd_cd_tuple, trade_type):
+    """Supabase에서 오늘 신고된 데이터 조회"""
+    if not SUPABASE_AVAILABLE:
+        return pd.DataFrame()
+    today_str = _kst_today()
+    try:
+        query = _supabase.table('apt_trades')\
+            .select('*')\
+            .eq('first_seen_date', today_str)
+        # lawd_cd 필터
+        lawd_list = list(lawd_cd_tuple)
+        if len(lawd_list) == 1:
+            query = query.eq('lawd_cd', lawd_list[0])
+        # trade_type 필터
+        if trade_type != '전체':
+            query = query.eq('trade_type', trade_type)
+        res = query.limit(2000).execute()
+        if not res.data:
+            return pd.DataFrame()
+        df = pd.DataFrame(res.data)
+        # 기존 앱과 동일한 컬럼명으로 변환
+        df = df.rename(columns={
+            'deal_date':    '계약일',
+            'dong':         '법정동',
+            'apt_name':     '단지명',
+            'area':         '전용면적',
+            'floor':        '층',
+            'price':        '거래금액(만 원)',
+            'monthly_rent': '월세(만 원)',
+            'trade_type':   '거래유형',
+            'build_year':   '건축년도',
+            'trade_gbn':    '중개거래여부',
+            'lawd_cd':      '법정동코드',
+            'sigungu':      '시군구',
+        })
+        if '전용면적' in df.columns:
+            df['전용면적'] = df['전용면적'].astype(str).apply(
+                lambda x: f"{float(x):.2f}㎡" if x not in ['', 'nan', 'None'] else '0㎡'
+            )
+        if '층' in df.columns:
+            df['층'] = df['층'].astype(str).apply(lambda x: f"{x}층")
+        df['시도'] = df['시군구'].apply(lambda x: x.split()[0] if x else '')
+        df['거래유형'] = df['거래유형'].astype(str)
+        return df
+    except Exception as e:
+        return pd.DataFrame()
+
 ITEMS_PER_PAGE = 50  # 페이지당 표시 건수
 
 if "table_key" not in st.session_state:
@@ -197,9 +272,7 @@ def resolve_months(period, custom_dates=None):
     """기간 설정값을 (months_list, start_date, end_date) 튜플로 반환"""
     if period == "오늘":
         today = datetime.date.today()
-        two_days_ago = today - datetime.timedelta(days=2)
-        months = list({today.strftime("%Y%m"), two_days_ago.strftime("%Y%m")})
-        return months, two_days_ago, today
+        return [today.strftime("%Y%m")], None, None  # 필터 없이 이번 달 전체
     elif period == "최근 7일":
         today = datetime.date.today()
         seven_ago = today - datetime.timedelta(days=7)
@@ -218,7 +291,9 @@ def resolve_months(period, custom_dates=None):
 
 def apply_date_filter(df, period, start_date, end_date):
     """날짜 필터 적용"""
-    if period in ["오늘", "최근 7일"]:
+    if period == "오늘":
+        return df  # 이번 달 전체 반환 (날짜 필터 없음)
+    elif period == "최근 7일":
         if df.empty or start_date is None:
             return df
         return df[
@@ -1169,43 +1244,67 @@ elif page == "🏢 아파트 실거래가":
 
         bar = st.progress(0, text="조회 중...")
 
-        # 전체 선택 시 매매 + 전월세 모두 호출
-        all_result_dfs = []
-        all_error_msgs = []
+        # ── 오늘 선택 시 Supabase (신고일 기준) 우선 사용 ──────────────────
+        if period == "오늘" and SUPABASE_AVAILABLE:
+            lawd_cd_list = tuple(cd for _, cd in targets if cd)
+            real_df = fetch_today_from_supabase(lawd_cd_list, trade_type)
+            bar.progress(100, text="조회 완료 ✅")
 
-        if trade_type in ["매매", "전체"]:
-            dfs, errs = fetch_all_targets(targets, months_to_fetch, "매매", sido_name, is_apt=True)
-            all_result_dfs.extend(dfs)
-            all_error_msgs.extend(errs)
+            if not real_df.empty:
+                real_df = apply_area_filter(real_df, pyeong_type, is_apt=True)
+                if dong_name not in ["전체 (구 단위)", "전체 (시/도 단위)"]:
+                    real_df = real_df[real_df["법정동"] == dong_name]
+                if selected_apt.strip():
+                    real_df = real_df[
+                        real_df["단지명"].str.contains(selected_apt, na=False) |
+                        real_df["법정동"].str.contains(selected_apt, na=False)
+                    ]
+                real_df = real_df.sort_values(by="계약일", ascending=False).reset_index(drop=True)
+                st.session_state.res_df = real_df
+                st.session_state["apt_list_page"] = 0
+            else:
+                st.session_state.res_df = pd.DataFrame()
+                st.info("📋 오늘 신고된 데이터가 아직 없습니다. (매일 오전 6시 업데이트)")
+            # Supabase 조회 완료 → 아래 일반 API 로직 건너뜀
+            st.rerun() if False else None  # 흐름 유지용 dummy
 
-        if trade_type in ["전세", "월세", "전체"]:
-            dfs, errs = fetch_all_targets(targets, months_to_fetch, "전월세", sido_name, is_apt=True)
-            all_result_dfs.extend(dfs)
-            all_error_msgs.extend(errs)
+        else:
+        # ── 일반 기간 조회 (공공 API) ────────────────────────────────────────
+            all_result_dfs = []
+            all_error_msgs = []
 
-        bar.progress(100, text="조회 완료 ✅")
+            if trade_type in ["매매", "전체"]:
+                dfs, errs = fetch_all_targets(targets, months_to_fetch, "매매", sido_name, is_apt=True)
+                all_result_dfs.extend(dfs)
+                all_error_msgs.extend(errs)
 
-        if all_result_dfs:
-            real_df = pd.concat(all_result_dfs, ignore_index=True)
+            if trade_type in ["전세", "월세", "전체"]:
+                dfs, errs = fetch_all_targets(targets, months_to_fetch, "전월세", sido_name, is_apt=True)
+                all_result_dfs.extend(dfs)
+                all_error_msgs.extend(errs)
 
-            if trade_type != "전체":
-                real_df = real_df[real_df["거래유형"] == trade_type]
+            bar.progress(100, text="조회 완료 ✅")
 
-            real_df = apply_area_filter(real_df, pyeong_type, is_apt=True)
+            if all_result_dfs:
+                real_df = pd.concat(all_result_dfs, ignore_index=True)
 
-            if dong_name not in ["전체 (구 단위)", "전체 (시/도 단위)"]:
-                real_df = real_df[real_df["법정동"] == dong_name]
-            if selected_apt.strip():
-                real_df = real_df[
-                    real_df["단지명"].str.contains(selected_apt, na=False) |
-                    real_df["법정동"].str.contains(selected_apt, na=False)
-                ]
+                if trade_type != "전체":
+                    real_df = real_df[real_df["거래유형"] == trade_type]
 
-            # 날짜 필터는 모든 필터 후 마지막 적용 (오늘 max() 정확도)
-            real_df = apply_date_filter(real_df, period, start_date, end_date)
-            real_df = real_df.sort_values(by="계약일", ascending=False).reset_index(drop=True)
-            st.session_state.res_df = real_df
-            st.session_state["apt_list_page"] = 0
+                real_df = apply_area_filter(real_df, pyeong_type, is_apt=True)
+
+                if dong_name not in ["전체 (구 단위)", "전체 (시/도 단위)"]:
+                    real_df = real_df[real_df["법정동"] == dong_name]
+                if selected_apt.strip():
+                    real_df = real_df[
+                        real_df["단지명"].str.contains(selected_apt, na=False) |
+                        real_df["법정동"].str.contains(selected_apt, na=False)
+                    ]
+
+                real_df = apply_date_filter(real_df, period, start_date, end_date)
+                real_df = real_df.sort_values(by="계약일", ascending=False).reset_index(drop=True)
+                st.session_state.res_df = real_df
+                st.session_state["apt_list_page"] = 0
 
             if real_df.empty:
                 if period == "오늘":
