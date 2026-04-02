@@ -1305,18 +1305,12 @@ elif page == "🏢 아파트 실거래가":
                 real_df = real_df.sort_values(by="계약일", ascending=False).reset_index(drop=True)
                 st.session_state.res_df = real_df
                 st.session_state["apt_list_page"] = 0
-
-            if real_df.empty:
-                if period == "오늘":
-                    st.info("📋 이번 달 실거래 데이터가 없습니다.")
+            else:
+                st.session_state.res_df = pd.DataFrame()
+                if all_error_msgs:
+                    st.error(f"⚠️ {all_error_msgs[0]}")
                 else:
                     st.info("해당 기간/조건에 신고된 실거래 데이터가 없습니다.")
-        else:
-            st.session_state.res_df = pd.DataFrame()
-            if all_error_msgs:
-                st.error(f"⚠️ {all_error_msgs[0]}")
-            else:
-                st.info("해당 기간/조건에 신고된 실거래 데이터가 없습니다.")
 
     if st.session_state.get("apt_searched", False):
         st.write("---")
