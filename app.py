@@ -26,20 +26,12 @@ except Exception:
     MOLIT_API_KEY = os.environ.get("MOLIT_API_KEY", _HARDCODED_KEY)
 
 # ── Supabase 연동 (오늘 신고일 조회용) ────────────────────────────────────────
+_SB_URL = "https://gsibdksdphtmlevfenad.supabase.co"
+_SB_KEY = ("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+           "eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzaWJka3NkcGh0bWxldmZlbmFkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4MzM4MzUsImV4cCI6MjA4OTQwOTgzNX0."
+           "90Tes6JMgbp-cAkjSjl1Jv6SvQbdYMWQCBwnVw6CrLE")
 try:
     from supabase import create_client as _sb_create
-    # Streamlit Cloud Secrets 우선, 없으면 환경변수, 없으면 하드코딩
-    try:
-        _SB_URL = st.secrets["SUPABASE_URL"]
-    except Exception:
-        _SB_URL = os.environ.get("SUPABASE_URL", "https://gsibdksdphtmlevfenad.supabase.co")
-    try:
-        _SB_KEY = st.secrets["SUPABASE_KEY"]
-    except Exception:
-        _SB_KEY = os.environ.get("SUPABASE_KEY",
-            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-            "eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzaWJka3NkcGh0bWxldmZlbmFkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4MzM4MzUsImV4cCI6MjA4OTQwOTgzNX0."
-            "90Tes6JMgbp-cAkjSjl1Jv6SvQbdYMWQCBwnVw6CrLE")
     _supabase = _sb_create(_SB_URL, _SB_KEY)
     SUPABASE_AVAILABLE = True
 except Exception:
@@ -1244,12 +1236,15 @@ elif page == "🏢 아파트 실거래가":
 
         bar = st.progress(0, text="조회 중...")
 
-        # ── 오늘 선택 시 Supabase (신고일 기준) 우선 사용 ──────────────────
-        if period == "오늘" and SUPABASE_AVAILABLE:
+        # ── 오늘 선택 시 Supabase (신고일 기준) 전용 ──────────────────────
+        if period == "오늘":
+            bar.progress(100, text="조회 완료 ✅")
+            if not SUPABASE_AVAILABLE:
+                st.warning("⚠️ Supabase 연결 실패. 관리자에게 문의하세요.")
+                st.session_state.res_df = pd.DataFrame()
+                st.stop()
             lawd_cd_list = tuple(cd for _, cd in targets if cd)
             real_df = fetch_today_from_supabase(lawd_cd_list, trade_type)
-            bar.progress(100, text="조회 완료 ✅")
-
             if not real_df.empty:
                 real_df = apply_area_filter(real_df, pyeong_type, is_apt=True)
                 if dong_name not in ["전체 (구 단위)", "전체 (시/도 단위)"]:
@@ -1265,8 +1260,6 @@ elif page == "🏢 아파트 실거래가":
             else:
                 st.session_state.res_df = pd.DataFrame()
                 st.info("📋 오늘 신고된 데이터가 아직 없습니다. (매일 오전 6시 업데이트)")
-            # Supabase 조회 완료 → 아래 일반 API 로직 건너뜀
-            st.rerun() if False else None  # 흐름 유지용 dummy
 
         else:
         # ── 일반 기간 조회 (공공 API) ────────────────────────────────────────
